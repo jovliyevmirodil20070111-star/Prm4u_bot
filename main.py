@@ -528,6 +528,16 @@ async def send_gif_and_text(chat_id, is_win, text):
         await bot_obj.send_message(chat_id, text, parse_mode="HTML")
 
 async def timeout_task(gid, stake, p1_id, p2_id):
+    await asyncio.sleep(THROW_TIMEOUT)
+    game = get_game(gid)
+    if not game or game[4] not in ('p1_turn', 'p2_turn'): return
+    cancel_game_db(gid)
+    change_pr(p1_id, stake); change_pr(p2_id, stake)
+    for uid in [p1_id, p2_id]:
+        lang = get_lang(uid)
+        try: await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
+        except: pass
+
 async def waiting_room_timeout(gid, uid):
     await asyncio.sleep(40)
     game = get_game(gid)
@@ -540,15 +550,6 @@ async def waiting_room_timeout(gid, uid):
             "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida hech kim kirmadi.",
             parse_mode="HTML")
     except: pass
-    await asyncio.sleep(THROW_TIMEOUT)
-    game = get_game(gid)
-    if not game or game[4] not in ('p1_turn', 'p2_turn'): return
-    cancel_game_db(gid)
-    change_pr(p1_id, stake); change_pr(p2_id, stake)
-    for uid in [p1_id, p2_id]:
-        lang = get_lang(uid)
-        try: await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
-        except: pass
 
 async def resolve_game(gid):
     game = get_game(gid)
