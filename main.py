@@ -670,7 +670,7 @@ async def cb_lang(cb: types.CallbackQuery):
     await cb.message.answer(tx(lang,"lang_set"), parse_mode="HTML", reply_markup=main_kb(lang))
     await cb.answer()
 
-@dp.message(F.text & ~Command())
+@dp.message(F.text & ~F.text.startswith("/"))
 async def h_text(msg: types.Message):
     uid   = msg.from_user.id
     lang  = get_lang(uid)
