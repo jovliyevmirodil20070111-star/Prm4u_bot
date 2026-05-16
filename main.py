@@ -670,12 +670,11 @@ async def cb_lang(cb: types.CallbackQuery):
     await cb.message.answer(tx(lang,"lang_set"), parse_mode="HTML", reply_markup=main_kb(lang))
     await cb.answer()
 
-@dp.message(F.text)
+@dp.message(F.text & ~Command())
 async def h_text(msg: types.Message):
     uid   = msg.from_user.id
     lang  = get_lang(uid)
     # Buyruqlarni o'tkazib yuborish
-    if msg.text and msg.text.startswith("/"): return
     state = user_states.get(uid)
     if not state: return
     text = msg.text.strip()
