@@ -640,9 +640,13 @@ async def resolve_game(gid):
 @dp.message(Command("start"))
 async def h_start(msg: types.Message):
     uid = msg.from_user.id
+    is_new = get_user(uid) is None
     register(uid, msg.from_user.username, msg.from_user.full_name)
     lang = get_lang(uid)
-    await msg.answer(tx(lang,"welcome"), parse_mode="HTML", reply_markup=main_kb(lang))
+    if is_new:
+        await msg.answer(tx(lang,"welcome"), parse_mode="HTML", reply_markup=main_kb(lang))
+    else:
+        await msg.answer("👋 Xush kelibsiz!\n\n👇 Menyudan foydalaning:", parse_mode="HTML", reply_markup=main_kb(lang))
 
 # ── Balans ───────────────────────────────────────────────
 @dp.message(F.text.in_(["🎟 Balans","🎟 Баланс"]))
