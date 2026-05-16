@@ -585,6 +585,21 @@ async def timeout_task(gid, stake, p1_id, p2_id):
             await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
         except Exception:
             pass
+async def waiting_room_timeout(gid, uid):
+    await asyncio.sleep(40)
+    game = get_game(gid)
+    if not game or game[4] != 'waiting':
+        return
+    cancel_game_db(gid)
+    lang = get_lang(uid)
+    try:
+        await bot_obj.send_message(
+            uid,
+            "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida raqib topilmadi.",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
 
 async def resolve_game(gid):
     """Ikki tosh ham tashlangandan keyin natijani hisobling"""
