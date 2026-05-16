@@ -863,8 +863,17 @@ async def cb_lang(cb: types.CallbackQuery):
     await cb.message.answer(tx(lang,"lang_set"), parse_mode="HTML", reply_markup=main_kb(lang))
     await cb.answer()
 
+BUTTON_TEXTS = [
+    "🎁 10,000 PR tekinga olish", "🎁 10,000 PR бесплатно",
+    "🎟 Balans", "🎟 Баланс",
+    "🎁 Kunlik bonus", "🎁 Бонус",
+    "🛍 PR sotib olish", "🛍 Купить PR",
+    "💬 Murojaat", "💬 Поддержка",
+    "🌐 Til", "🌐 Язык",
+    "🎲 O'yin xonasi", "🎲 Игровой зал",
+]
 # ─── Text input handler (transfer + obmen) ──────────────
-@dp.message(F.text & ~F.text.startswith("/"))
+@dp.message(F.text & ~F.text.startswith("/") & ~F.text.in_(BUTTON_TEXTS))
 async def h_text(msg: types.Message):
     uid   = msg.from_user.id
     lang  = get_lang(uid)
@@ -980,8 +989,8 @@ async def cmd_give_pr(msg: types.Message):
         await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     p = msg.text.split()
     if len(p) != 3 or not p[1].isdigit() or not p[2].isdigit():
-        await msg.answer("❌ Format: /give_pr <user_id> <miqdor>"); return
-    uid, amount = int(p[1]), int(p[2])
+        await msg.answer("❌ Format: /give_pr <miqdor> <user_id>"); return
+    uid, amount = int(p[2]), int(p[1])
     change_pr(uid, amount)
     lang = get_lang(msg.from_user.id)
     await msg.answer(tx(lang,"admin_ok_pr", uid=uid, amount=amount, bal=get_pr(uid)), parse_mode="HTML")
@@ -992,10 +1001,10 @@ async def cmd_give_usd(msg: types.Message):
         await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     p = msg.text.split()
     if len(p) != 3:
-        await msg.answer("❌ Format: /give_usd <user_id> <miqdor>\nMasalan: /give_usd 123456 1.5"); return
+        await msg.answer("❌ Format: /give_usd <miqdor> <user_id>\nMasalan: /give_usd 1.5 123456"); return
     try:
-        uid = int(p[1])
-        amount = float(p[2])
+        uid = int(p[2])
+        amount = float(p[1])
         if amount <= 0: raise ValueError()
     except:
         await msg.answer("❌ Noto'g'ri format! Masalan: /give_usd 123456 1.5"); return
