@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════╗
-║         PRm4u GAME BOT  v2.1  — @mirodil_info        ║
+║         PRm4u GAME BOT  v2.2  — @mirodil_info        ║
 ║  O'rnatish:  pip install aiogram aiohttp psycopg2-binary ║
 ╚══════════════════════════════════════════════════════╝
 """
@@ -16,10 +16,13 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton
 )
 
-TOKEN          = "8720740940:AAGE1imTXRGhtOZ-fYH_nzh1tJstwgCeE38"
-SUPPORT_LINK   = "https://t.me/mirodil_info"
-ADMIN_IDS      = [5656375477]
-PR_PER_DOLLAR  = 20_000
+TOKEN            = "8720740940:AAGE1imTXRGhtOZ-fYH_nzh1tJstwgCeE38"
+SUPPORT_LINK     = "https://t.me/mirodil_info"
+ADMIN_IDS        = [5656375477]
+PR_PER_DOLLAR    = 20_000
+CHANNEL_USERNAME = "@Prm4ufree"   # ← O'z kanal username ingizni yozing
+CHANNEL_LINK     = "https://t.me/prm4ufree"  # ← Kanal linki
+CHANNEL_PR_GIFT  = 10_000
 COMMISSION_PCT = 5
 WIN_GIF_ID     = "CgACAgQAAxkBAAFJuWlqB4DEKxfR8xGgIi11Hpbyi9FviAACvwIAAhn8VVGXEPylDK8y3DsE"
 LOSS_GIF_ID    = "CgACAgQAAxkBAAFJuWdqB4DBtfQlp_oKd8LheQFKFCEsCAACpQIAAqnITFF-EHFNd1WImjsE"
@@ -49,11 +52,15 @@ def init_db():
         lang        TEXT    DEFAULT 'uz',
         wins        INTEGER DEFAULT 0,
         losses      INTEGER DEFAULT 0,
-        usd_balance REAL    DEFAULT 0
+        usd_balance REAL    DEFAULT 0,
+        channel_claimed INTEGER DEFAULT 0
     )""")
-    # Eski DB larga usd_balance ustunini qo'shish (migration)
+    # Eski DB larga ustunlarni qo'shish (migration)
     try:
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_balance REAL DEFAULT 0")
+    except: pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS channel_claimed INTEGER DEFAULT 0")
     except: pass
     c.execute("""CREATE TABLE IF NOT EXISTS games (
         id         SERIAL PRIMARY KEY,
@@ -96,6 +103,12 @@ def get_pr(uid):        u = get_user(uid); return u[3] if u else 0
 def get_lang(uid):      u = get_user(uid); return u[5] if u else 'uz'
 def get_wl(uid):        u = get_user(uid); return (u[6], u[7]) if u else (0, 0)
 def get_usd_bal(uid):   u = get_user(uid); return round(u[8], 4) if u and u[8] else 0.0
+def is_channel_claimed(uid): u = get_user(uid); return bool(u[9]) if u else False
+
+def set_channel_claimed(uid):
+    conn = dbc(); c = conn.cursor()
+    c.execute("UPDATE users SET channel_claimed=1 WHERE user_id=%s", (uid,))
+    conn.commit(); conn.close()
 
 def set_lang(uid, lang):
     conn = dbc(); c = conn.cursor()
@@ -259,7 +272,7 @@ def get_stats():
 T = {
 "uz": {
 "welcome":("🎲 <b>PRm4u O'yin Botiga Xush Kelibsiz!</b>\n\n🎟 Sizga <b>1 000 PR</b> boshlang'ich balans berildi!\n\n👇 Menyudan foydalaning:"),
-"balance":("👇 <b>Sizning balans</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nKurs: 1$ = {pr_per_usd:,} PR\n\n💡 PR yoki $ sotib olish:\n{support}"),
+"balance":("👇 <b>Sizning balans</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nKurs: 1$ = {pr_per_usd:,} PR"),
 "profile":("👤 <b>Profil</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Ism: {name}\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n🏆 G'alabalar: {wins}\n💀 Mag'lubiyatlar: {losses}"),
 "transfer_ask_id":"💸 <b>PR Transfer</b>\n\nPR yubormoqchi bo'lgan foydalanuvchining <b>Telegram ID</b> sini kiriting:\n\n💡 ID ni bilish: @userinfobot",
 "transfer_ask_amt":"👤 Foydalanuvchi: <b>{name}</b>\n🆔 ID: <code>{uid}</code>\n\nQancha PR yubormoqchisiz?\n(Sizda: <b>{pr:,} PR</b>)",
@@ -311,7 +324,12 @@ T = {
 "admin_ok_usd":"✅ {uid} ga {amount:.4f} $ berildi. USD balansi: {bal:.4f} $",
 "admin_rate":"✅ Kurs: 1$ = {uzs:,} so'm | {pr_per_usd:,} PR",
 "admin_only":"❌ Faqat admin!",
-"btn_game":"🎲 O'yin xonasi","btn_balance":"🎟 Balans","btn_bonus":"🎁 Kunlik bonus",
+"channel_check":"🎁 <b>10,000 PR tekinga olish</b>\n\nAvval kanalga obuna bo'ling:\n{link}\n\nObuna bo'lgach, tugmani bosing 👇",
+"channel_not_subscribed":"❌ Siz hali kanalga obuna bo'lmagansiz!\n\nObuna bo'ling: {link}\n\nKeyin qayta urining.",
+"channel_already_claimed":"✅ Siz allaqachon bonus PR oldiniz!\n\n🎟 Balans: <b>{pr:,} PR</b>",
+"channel_bonus_ok":"🎉 <b>Tabriklaymiz!</b>\n\nKanalga obuna bo'lganingiz uchun <b>+{amount:,} PR</b> berildi!\n\n🎟 Balans: <b>{pr:,} PR</b>",
+"btn_channel_bonus":"🎁 10,000 PR tekinga olish",
+"btn_check_sub":"✅ Obuna bo'ldim, PR olish",
 "btn_support":"💬 Murojaat","btn_buy":"🛍 PR sotib olish","btn_lang":"🌐 Til",
 "btn_transfer":"💸 PR Transfer","btn_obmen":"💱 Ayirboshlash","btn_confirm":"✅ Tasdiqlash","btn_cancel":"❌ Bekor",
 "btn_throw":"🎲 Tosh tashlash","btn_join":"✅ Qo'shilish","btn_profile":"👤 Profil ko'rish",
@@ -320,7 +338,7 @@ T = {
 },
 "ru": {
 "welcome":("🎲 <b>Добро пожаловать в PRm4u!</b>\n\n🎟 Вам начислено <b>1 000 PR</b>!\n\n👇 Используйте меню:"),
-"balance":("👇 <b>Ваш баланс</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nКурс: 1$ = {pr_per_usd:,} PR\n\n💡 Купить PR или $:\n{support}"),
+"balance":("👇 <b>Ваш баланс</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nКурс: 1$ = {pr_per_usd:,} PR"),
 "profile":("👤 <b>Профиль</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Имя: {name}\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n🏆 Победы: {wins}\n💀 Поражения: {losses}"),
 "transfer_ask_id":"💸 <b>Перевод PR</b>\n\nВведите <b>Telegram ID</b> получателя:\n\n💡 ID узнать: @userinfobot",
 "transfer_ask_amt":"👤 Пользователь: <b>{name}</b>\n🆔 ID: <code>{uid}</code>\n\nСколько PR перевести?\n(У вас: <b>{pr:,} PR</b>)",
@@ -372,7 +390,12 @@ T = {
 "admin_ok_usd":"✅ {uid} получил {amount:.4f} $. USD баланс: {bal:.4f} $",
 "admin_rate":"✅ Курс: 1$ = {uzs:,} сум | {pr_per_usd:,} PR",
 "admin_only":"❌ Только для админов!",
-"btn_game":"🎲 Игровой зал","btn_balance":"🎟 Баланс","btn_bonus":"🎁 Бонус",
+"channel_check":"🎁 <b>Получить 10,000 PR бесплатно</b>\n\nСначала подпишитесь на канал:\n{link}\n\nПосле подписки нажмите кнопку 👇",
+"channel_not_subscribed":"❌ Вы ещё не подписаны на канал!\n\nПодпишитесь: {link}\n\nЗатем попробуйте снова.",
+"channel_already_claimed":"✅ Вы уже получили бонусные PR!\n\n🎟 Баланс: <b>{pr:,} PR</b>",
+"channel_bonus_ok":"🎉 <b>Поздравляем!</b>\n\nЗа подписку на канал вам начислено <b>+{amount:,} PR</b>!\n\n🎟 Баланс: <b>{pr:,} PR</b>",
+"btn_channel_bonus":"🎁 10,000 PR бесплатно",
+"btn_check_sub":"✅ Подписался, получить PR",
 "btn_support":"💬 Поддержка","btn_buy":"🛍 Купить PR","btn_lang":"🌐 Язык",
 "btn_transfer":"💸 PR Перевод","btn_obmen":"💱 Обмен","btn_confirm":"✅ Подтвердить","btn_cancel":"❌ Отмена",
 "btn_throw":"🎲 Бросить кость","btn_join":"✅ Войти","btn_profile":"👤 Профиль",
@@ -391,8 +414,9 @@ def tx(lang, key, **kw):
 def main_kb(lang):
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text=tx(lang,"btn_game")), KeyboardButton(text=tx(lang,"btn_balance"))],
-        [KeyboardButton(text=tx(lang,"btn_bonus")), KeyboardButton(text=tx(lang,"btn_buy"))],
-        [KeyboardButton(text=tx(lang,"btn_support")), KeyboardButton(text=tx(lang,"btn_lang"))],
+        [KeyboardButton(text=tx(lang,"btn_bonus")), KeyboardButton(text=tx(lang,"btn_channel_bonus"))],
+        [KeyboardButton(text=tx(lang,"btn_buy")), KeyboardButton(text=tx(lang,"btn_lang"))],
+        [KeyboardButton(text=tx(lang,"btn_support"))],
     ], resize_keyboard=True)
 
 def balance_kb(lang):
@@ -476,6 +500,12 @@ def support_kb():
         InlineKeyboardButton(text="💬 Admin — @mirodil_info", url=SUPPORT_LINK)
     ]])
 
+def channel_kb(lang):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Kanalga o'tish", url=CHANNEL_LINK)],
+        [InlineKeyboardButton(text=tx(lang,"btn_check_sub"), callback_data="channel_claim")],
+    ])
+
 # ════════════════════════════════════════════════════════
 #  🎮  O'YIN LOGIKASI
 # ════════════════════════════════════════════════════════
@@ -555,7 +585,7 @@ async def h_balance(msg: types.Message):
     pr  = get_pr(uid)
     usd = get_usd_bal(uid)
     await msg.answer(
-        tx(lang,"balance", pr=pr, usd=usd, pr_per_usd=PR_PER_DOLLAR, support=SUPPORT_LINK),
+        tx(lang,"balance", pr=pr, usd=usd, pr_per_usd=PR_PER_DOLLAR),
         parse_mode="HTML", reply_markup=balance_kb(lang)
     )
 
@@ -902,6 +932,40 @@ async def h_text(msg: types.Message):
             reply_markup=obmen_confirm_kb(lang, "usdtopr", amount_pr, usd_key)
         )
 
+@dp.message(F.text.in_(["🎁 10,000 PR tekinga olish","🎁 10,000 PR бесплатно"]))
+async def h_channel_bonus(msg: types.Message):
+    uid = msg.from_user.id
+    register(uid, msg.from_user.username, msg.from_user.full_name)
+    lang = get_lang(uid)
+    if is_channel_claimed(uid):
+        await msg.answer(tx(lang,"channel_already_claimed", pr=get_pr(uid)), parse_mode="HTML"); return
+    await msg.answer(
+        tx(lang,"channel_check", link=CHANNEL_LINK),
+        parse_mode="HTML",
+        reply_markup=channel_kb(lang)
+    )
+
+@dp.callback_query(F.data == "channel_claim")
+async def cb_channel_claim(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    if is_channel_claimed(uid):
+        await cb.answer(tx(lang,"channel_already_claimed", pr=get_pr(uid)), show_alert=True); return
+    try:
+        member = await bot_obj.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=uid)
+        is_member = member.status not in ("left", "kicked", "banned")
+    except:
+        is_member = False
+    if not is_member:
+        await cb.answer(tx(lang,"channel_not_subscribed", link=CHANNEL_LINK), show_alert=True); return
+    set_channel_claimed(uid)
+    change_pr(uid, CHANNEL_PR_GIFT)
+    pr = get_pr(uid)
+    await cb.message.edit_text(
+        tx(lang,"channel_bonus_ok", amount=CHANNEL_PR_GIFT, pr=pr),
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
 # ════════════════════════════════════════════════════════
 #  👑  ADMIN BUYRUQLARI
 # ════════════════════════════════════════════════════════
@@ -967,7 +1031,7 @@ async def cmd_stats(msg: types.Message):
 # ════════════════════════════════════════════════════════
 async def main():
     init_db()
-    print("✅ PRm4u Bot v2.1 + PostgreSQL ishga tushdi!")
+    print("✅ PRm4u Bot v2.2 + PostgreSQL ishga tushdi!")
     await dp.start_polling(bot_obj)
 
 if __name__ == "__main__":
