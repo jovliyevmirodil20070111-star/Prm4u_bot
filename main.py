@@ -140,7 +140,7 @@ def claim_bonus(uid):
                 rem = timedelta(seconds=86400) - diff
                 total_secs = int(rem.total_seconds())
                 h = total_secs // 3600
-                m = (total_secs % 3600) // 60   # ✅ BUG FIX: to'g'ri daqiqa hisoblash
+                m = (total_secs % 3600) // 60
                 return False, (h, m)
         except: pass
     amount = random.randint(1, 100)
@@ -531,78 +531,44 @@ def support_kb():
 #  🎮  O'YIN YORDAMCHILARI
 # ════════════════════════════════════════════════════════
 async def send_gif_and_text(chat_id, is_win, text):
-    """
-    ✅ BUG FIX: Asl kodda send_message IKKI MARTA chaqirilgan edi.
-    Endi faqat bir marta xabar yuboriladi.
-    """
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
-
-    # 1-urinish: send_animation (GIF)
     try:
-        await bot_obj.send_animation(
-            chat_id, animation=gif,
-            caption=text, parse_mode="HTML"
-        )
-        return  # ✅ Muvaffaqiyatli — chiqamiz
-    except Exception:
-        pass
-
-    # 2-urinish: send_document
+        await bot_obj.send_animation(chat_id, animation=gif, caption=text, parse_mode="HTML")
+        return
+    except Exception: pass
     try:
-        await bot_obj.send_document(
-            chat_id, document=gif,
-            caption=text, parse_mode="HTML"
-        )
-        return  # ✅ Muvaffaqiyatli — chiqamiz
-    except Exception:
-        pass
-
-    # 3-urinish: send_video
+        await bot_obj.send_document(chat_id, document=gif, caption=text, parse_mode="HTML")
+        return
+    except Exception: pass
     try:
-        await bot_obj.send_video(
-            chat_id, video=gif,
-            caption=text, parse_mode="HTML"
-        )
-        return  # ✅ Muvaffaqiyatli — chiqamiz
-    except Exception:
-        pass
-
-    # Oxirgi fallback: faqat matn
+        await bot_obj.send_video(chat_id, video=gif, caption=text, parse_mode="HTML")
+        return
+    except Exception: pass
     await bot_obj.send_message(chat_id, text, parse_mode="HTML")
 
 async def timeout_task(gid, stake, p1_id, p2_id):
     await asyncio.sleep(THROW_TIMEOUT)
     game = get_game(gid)
-    if not game or game[4] not in ('p1_turn', 'p2_turn'):
-        return
-    # Bekor qilish va PR qaytarish
+    if not game or game[4] not in ('p1_turn', 'p2_turn'): return
     cancel_game_db(gid)
     change_pr(p1_id, stake)
     change_pr(p2_id, stake)
     for uid in [p1_id, p2_id]:
         lang = get_lang(uid)
-        try:
-            await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
-        except Exception:
-            pass
+        try: await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
+        except Exception: pass
+
 async def waiting_room_timeout(gid, uid):
     await asyncio.sleep(40)
     game = get_game(gid)
-    if not game or game[4] != 'waiting':
-        return
+    if not game or game[4] != 'waiting': return
     cancel_game_db(gid)
     lang = get_lang(uid)
     try:
-        await bot_obj.send_message(
-            uid,
-            "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida raqib topilmadi.",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
+        await bot_obj.send_message(uid, "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida raqib topilmadi.", parse_mode="HTML")
+    except Exception: pass
 
 async def resolve_game(gid):
-    """Ikki tosh ham tashlangandan keyin natijani hisobling"""
     game = get_game(gid)
     if not game: return
     gid_, p1, p2, stake = game[0], game[1], game[2], game[3]
@@ -611,13 +577,11 @@ async def resolve_game(gid):
     commission     = int(stake * COMMISSION_PCT / 100)
 
     if p1_val == p2_val:
-        # Durrang
         change_pr(p1, stake); change_pr(p2, stake)
         finish_game_db(gid, 0)
         for uid, lang in [(p1, lang1), (p2, lang2)]:
             bal = get_pr(uid)
-            await send_gif_and_text(uid, False,
-                tx(lang,"draw_text", gid=gid, stake=stake, val=p1_val, bal=bal))
+            await send_gif_and_text(uid, False, tx(lang,"draw_text", gid=gid, stake=stake, val=p1_val, bal=bal))
     else:
         winner_id  = p1 if p1_val > p2_val else p2
         loser_id   = p2 if p1_val > p2_val else p1
@@ -626,9 +590,7 @@ async def resolve_game(gid):
 
         winnings   = (stake * 2) - commission
         change_pr(winner_id, winnings)
-        # Komissiya adminga
-        if ADMIN_IDS:
-            change_pr(ADMIN_IDS[0], commission)
+        if ADMIN_IDS: change_pr(ADMIN_IDS[0], commission)
 
         add_win(winner_id); add_loss(loser_id)
         finish_game_db(gid, winner_id)
@@ -643,15 +605,11 @@ async def resolve_game(gid):
                commission=commission, winner=winner_id, loser=loser_id,
                w_dice=w_dice, l_dice=l_dice, bal=winner_bal))
         await send_gif_and_text(loser_id, False,
-            tx(llang,"loss_text", gid=gid, stake=stake,
-               winner=winner_id, loser=loser_id,
-               w_dice=w_dice, l_dice=l_dice, bal=loser_bal))
+            tx(llang,"loss_text", gid=gid, stake=stake, winner=winner_id, loser=loser_id, w_dice=w_dice, l_dice=l_dice, bal=loser_bal))
 
 # ════════════════════════════════════════════════════════
 #  📩  HANDLERLAR
 # ════════════════════════════════════════════════════════
-
-# ── /start ───────────────────────────────────────────────
 @dp.message(Command("start"))
 async def h_start(msg: types.Message):
     uid = msg.from_user.id
@@ -663,7 +621,6 @@ async def h_start(msg: types.Message):
     else:
         await msg.answer("👋 Xush kelibsiz!\n\n👇 Menyudan foydalaning:", parse_mode="HTML", reply_markup=main_kb(lang))
 
-# ── Balans ───────────────────────────────────────────────
 @dp.message(F.text.in_(["🎟 Balans","🎟 Баланс"]))
 async def h_balance(msg: types.Message):
     uid = msg.from_user.id
@@ -672,12 +629,8 @@ async def h_balance(msg: types.Message):
     pr   = get_pr(uid)
     usd  = pr / PR_PER_DOLLAR
     uzs  = await get_usd_uzs()
-    await msg.answer(
-        tx(lang,"balance", pr=pr, usd=usd, uzs=uzs, support=SUPPORT_LINK),
-        parse_mode="HTML", reply_markup=balance_kb(lang)
-    )
+    await msg.answer(tx(lang,"balance", pr=pr, usd=usd, uzs=uzs, support=SUPPORT_LINK), parse_mode="HTML", reply_markup=balance_kb(lang))
 
-# ── Transfer boshlash ────────────────────────────────────
 @dp.callback_query(F.data == "transfer_start")
 async def cb_transfer_start(cb: types.CallbackQuery):
     uid  = cb.from_user.id
@@ -703,33 +656,23 @@ async def cb_tr_yes(cb: types.CallbackQuery):
     amount  = int(parts[3])
     ok, reason = do_transfer(uid, to_id, amount)
     if ok:
-        await cb.message.edit_text(
-            tx(lang,"transfer_ok", to_id=to_id, amount=amount),
-            parse_mode="HTML"
-        )
+        await cb.message.edit_text(tx(lang,"transfer_ok", to_id=to_id, amount=amount), parse_mode="HTML")
         to_lang = get_lang(to_id)
-        try:
-            await bot_obj.send_message(to_id, tx(to_lang,"transfer_recv",
-                                                  from_id=uid, amount=amount), parse_mode="HTML")
-        except Exception:
-            pass
+        try: await bot_obj.send_message(to_id, tx(to_lang,"transfer_recv", from_id=uid, amount=amount), parse_mode="HTML")
+        except Exception: pass
     else:
         pr = get_pr(uid)
-        if reason == "no_user":
-            await cb.message.edit_text(tx(lang,"transfer_no_user"), parse_mode="HTML")
-        else:
-            await cb.message.edit_text(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML")
+        if reason == "no_user": await cb.message.edit_text(tx(lang,"transfer_no_user"), parse_mode="HTML")
+        else: await cb.message.edit_text(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML")
     user_states.pop(uid, None)
     await cb.answer()
 
-# ── Buy PR ───────────────────────────────────────────────
 @dp.callback_query(F.data == "buy_pr")
 async def cb_buy_pr(cb: types.CallbackQuery):
     lang = get_lang(cb.from_user.id)
     await cb.message.answer(tx(lang,"buy_pr"), parse_mode="HTML", reply_markup=support_kb())
     await cb.answer()
 
-# ── O'yin xonasi ─────────────────────────────────────────
 @dp.message(F.text.in_(["🎲 O'yin xonasi","🎲 Игровой зал"]))
 async def h_game(msg: types.Message):
     uid  = msg.from_user.id
@@ -743,11 +686,9 @@ async def cb_game_back(cb: types.CallbackQuery):
     uid  = cb.from_user.id
     lang = get_lang(uid)
     pr   = get_pr(uid)
-    await cb.message.edit_text(tx(lang,"game_menu", pr=pr), parse_mode="HTML",
-                                reply_markup=game_main_kb(lang))
+    await cb.message.edit_text(tx(lang,"game_menu", pr=pr), parse_mode="HTML", reply_markup=game_main_kb(lang))
     await cb.answer()
 
-# ── Xonalar ro'yxati ─────────────────────────────────────
 @dp.callback_query(F.data == "rooms_list")
 async def cb_rooms(cb: types.CallbackQuery):
     uid   = cb.from_user.id
@@ -760,13 +701,9 @@ async def cb_rooms(cb: types.CallbackQuery):
                                         [InlineKeyboardButton(text=tx(lang,"btn_back"),   callback_data="game_back")],
                                     ]))
     else:
-        await cb.message.edit_text(
-            tx(lang,"rooms_list", count=len(rooms)), parse_mode="HTML",
-            reply_markup=rooms_kb(lang, rooms)
-        )
+        await cb.message.edit_text(tx(lang,"rooms_list", count=len(rooms)), parse_mode="HTML", reply_markup=rooms_kb(lang, rooms))
     await cb.answer()
 
-# ── Xona detali ──────────────────────────────────────────
 @dp.callback_query(F.data.startswith("room_"))
 async def cb_room_detail(cb: types.CallbackQuery):
     uid  = cb.from_user.id
@@ -775,14 +712,9 @@ async def cb_room_detail(cb: types.CallbackQuery):
     game = get_game(gid)
     if not game or game[4] != 'waiting':
         await cb.answer("❌ Xona topilmadi yoki to'lgan!", show_alert=True); return
-    await cb.message.edit_text(
-        tx(lang,"room_detail", gid=gid, creator_id=game[1], stake=game[3]),
-        parse_mode="HTML",
-        reply_markup=room_detail_kb(lang, gid, game[1])
-    )
+    await cb.message.edit_text(tx(lang,"room_detail", gid=gid, creator_id=game[1], stake=game[3]), parse_mode="HTML", reply_markup=room_detail_kb(lang, gid, game[1]))
     await cb.answer()
 
-# ── Profil ko'rish ───────────────────────────────────────
 @dp.callback_query(F.data.startswith("profile_"))
 async def cb_profile(cb: types.CallbackQuery):
     lang    = get_lang(cb.from_user.id)
@@ -793,22 +725,15 @@ async def cb_profile(cb: types.CallbackQuery):
     wins, losses = u[6], u[7]
     pr   = u[3]
     name = u[2] or u[1] or f"#{view_id}"
-    await cb.answer(
-        tx(lang,"profile", uid=view_id, name=name, pr=pr, wins=wins, losses=losses),
-        show_alert=True
-    )
+    await cb.answer(tx(lang,"profile", uid=view_id, name=name, pr=pr, wins=wins, losses=losses), show_alert=True)
 
-# ── Yangi xona yaratish ───────────────────────────────────
 @dp.callback_query(F.data == "create_room")
 async def cb_create_room(cb: types.CallbackQuery):
     uid  = cb.from_user.id
     lang = get_lang(uid)
     if has_waiting(uid):
         await cb.answer(tx(lang,"already_wait"), show_alert=True); return
-    await cb.message.edit_text(
-        tx(lang,"game_menu", pr=get_pr(uid)), parse_mode="HTML",
-        reply_markup=stakes_kb(lang)
-    )
+    await cb.message.edit_text(tx(lang,"game_menu", pr=get_pr(uid)), parse_mode="HTML", reply_markup=stakes_kb(lang))
     await cb.answer()
 
 @dp.callback_query(F.data.startswith("newroom_"))
@@ -818,15 +743,11 @@ async def cb_newroom(cb: types.CallbackQuery):
     stake = int(cb.data.split("_")[1])
     pr    = get_pr(uid)
     if pr < stake:
-        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK),
-                        show_alert=True); return
+        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK), show_alert=True); return
     gid = create_game(uid, stake)
-    await cb.message.edit_text(
-        tx(lang,"room_created", gid=gid, stake=stake), parse_mode="HTML"
-    )
+    await cb.message.edit_text(tx(lang,"room_created", gid=gid, stake=stake), parse_mode="HTML")
     await cb.answer()
 
-# ── Xonaga qo'shilish ─────────────────────────────────────
 @dp.callback_query(F.data.startswith("join_"))
 async def cb_join(cb: types.CallbackQuery):
     uid  = cb.from_user.id
@@ -838,14 +759,12 @@ async def cb_join(cb: types.CallbackQuery):
         await cb.answer("❌ Xona mavjud emas!", show_alert=True); return
 
     p1, stake = game[1], game[3]
-
     if uid == p1:
         await cb.answer("❌ O'z xonangizga qo'shila olmaysiz!", show_alert=True); return
 
     pr = get_pr(uid)
     if pr < stake:
-        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK),
-                        show_alert=True); return
+        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK), show_alert=True); return
 
     p1_pr = get_pr(p1)
     if p1_pr < stake:
@@ -853,39 +772,21 @@ async def cb_join(cb: types.CallbackQuery):
         await cb.answer("❌ Xona yaratuvchida PR yetarli emas, xona bekor qilindi.", show_alert=True)
         return
 
-    # PRni ikkalasidan ayir
-    change_pr(uid, -stake)
-    change_pr(p1,  -stake)
+    change_pr(uid, -stake); change_pr(p1,  -stake)
     start_game(gid, uid)
-
     p1_lang = get_lang(p1)
-    p2_lang = lang
 
-    # Boshlash xabari
-    started_text_p1 = tx(p1_lang,"game_started", gid=gid, stake=stake,
-                          p1=p1, p2=uid, turn_name=f"#{p1}")
-    started_text_p2 = tx(p2_lang,"game_started", gid=gid, stake=stake,
-                          p1=p1, p2=uid, turn_name=f"#{p1}")
+    started_text_p1 = tx(p1_lang,"game_started", gid=gid, stake=stake, p1=p1, p2=uid, turn_name=f"#{p1}")
+    started_text_p2 = tx(lang,"game_started", gid=gid, stake=stake, p1=p1, p2=uid, turn_name=f"#{p1}")
 
-    # P1 ga throw tugmasi
-    try:
-        await bot_obj.send_message(p1, started_text_p1, parse_mode="HTML",
-                                   reply_markup=throw_kb(p1_lang, gid))
-    except Exception:
-        pass
+    try: await bot_obj.send_message(p1, started_text_p1, parse_mode="HTML", reply_markup=throw_kb(p1_lang, gid))
+    except Exception: pass
 
-    # P2 ga wait xabari
-    await cb.message.answer(
-        started_text_p2 + "\n\n" + tx(p2_lang,"wait_turn"),
-        parse_mode="HTML"
-    )
-
-    # Timeout vazifasini boshlash
+    await cb.message.answer(started_text_p2 + "\n\n" + tx(lang,"wait_turn"), parse_mode="HTML")
     task = asyncio.create_task(timeout_task(gid, stake, p1, uid))
     game_timers[gid] = task
     await cb.answer()
 
-# ── Tosh tashlash ─────────────────────────────────────────
 @dp.callback_query(F.data.startswith("throw_"))
 async def cb_throw(cb: types.CallbackQuery):
     uid  = cb.from_user.id
@@ -898,7 +799,6 @@ async def cb_throw(cb: types.CallbackQuery):
 
     status, p1, p2 = game[4], game[1], game[2]
     stake = game[3]
-
     is_p1 = (uid == p1)
     is_p2 = (uid == p2)
 
@@ -909,63 +809,32 @@ async def cb_throw(cb: types.CallbackQuery):
     if status not in ('p1_turn', 'p2_turn'):
         await cb.answer("❌ Noto'g'ri holat!", show_alert=True); return
 
-    # Tugmani o'chirib qo'yamiz
-    try:
-        await cb.message.edit_reply_markup()
-    except Exception:
-        pass
+    try: await cb.message.edit_reply_markup()
+    except Exception: pass
 
-    # Dice tashlash
     dice_msg = await bot_obj.send_dice(cb.message.chat.id, emoji="🎲")
     val = dice_msg.dice.value
-    await asyncio.sleep(4)  # animatsiya tugashini kutish
+    await asyncio.sleep(4)
 
     if status == 'p1_turn':
         set_p1_dice(gid, val)
         p2_lang = get_lang(p2)
+        await bot_obj.send_message(p1, f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...", parse_mode="HTML")
+        try: await bot_obj.send_message(p2, tx(p2_lang, "your_turn_now"), parse_mode="HTML", reply_markup=throw_kb(p2_lang, gid))
+        except Exception: pass
 
-        # P1 ga o'z natijasi
-        await bot_obj.send_message(
-            p1,
-            f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...",
-            parse_mode="HTML"
-        )
-        # P2 ga navbat xabari — P1 ning raqami ko'rinmaydi (adolatli o'yin)
-        try:
-            await bot_obj.send_message(
-                p2,
-                tx(p2_lang, "your_turn_now"),
-                parse_mode="HTML",
-                reply_markup=throw_kb(p2_lang, gid)
-            )
-        except Exception:
-            pass
-
-        # Eski timeout ni bekor qilib yangi boshlash
-        if gid in game_timers:
-            game_timers[gid].cancel()
+        if gid in game_timers: game_timers[gid].cancel()
         task = asyncio.create_task(timeout_task(gid, stake, p1, p2))
         game_timers[gid] = task
-
-    else:  # p2_turn
+    else:
         set_p2_dice(gid, val)
-
-        # P2 ga o'z natijasi
-        await bot_obj.send_message(
-            p2,
-            f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...",
-            parse_mode="HTML"
-        )
-        # Timeoutni bekor qil
+        await bot_obj.send_message(p2, f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...", parse_mode="HTML")
         if gid in game_timers:
             game_timers[gid].cancel()
             del game_timers[gid]
-        # Natijani hisobla
         await resolve_game(gid)
-
     await cb.answer()
 
-# ── Kunlik bonus ──────────────────────────────────────────
 @dp.message(F.text.in_(["🎁 Kunlik bonus","🎁 Бонус"]))
 async def h_bonus(msg: types.Message):
     uid  = msg.from_user.id
@@ -982,20 +851,16 @@ async def h_bonus(msg: types.Message):
     await wait.delete()
     await msg.answer(tx(lang,"bonus_win", amount=result, bal=get_pr(uid)), parse_mode="HTML")
 
-# ── PR sotib olish ────────────────────────────────────────
 @dp.message(F.text.in_(["🛍 PR sotib olish","🛍 Купить PR"]))
 async def h_buy(msg: types.Message):
     lang = get_lang(msg.from_user.id)
     await msg.answer(tx(lang,"buy_pr"), parse_mode="HTML", reply_markup=support_kb())
 
-# ── Murojaat ─────────────────────────────────────────────
 @dp.message(F.text.in_(["💬 Murojaat","💬 Поддержка"]))
 async def h_support(msg: types.Message):
     lang = get_lang(msg.from_user.id)
-    await msg.answer(tx(lang,"support_msg", link=SUPPORT_LINK),
-                     parse_mode="HTML", reply_markup=support_kb())
+    await msg.answer(tx(lang,"support_msg", link=SUPPORT_LINK), parse_mode="HTML", reply_markup=support_kb())
 
-# ── Til ──────────────────────────────────────────────────
 @dp.message(F.text.in_(["🌐 Til","🌐 Язык"]))
 async def h_lang(msg: types.Message):
     lang = get_lang(msg.from_user.id)
@@ -1009,14 +874,12 @@ async def cb_lang(cb: types.CallbackQuery):
     await cb.message.answer(tx(lang,"lang_set"), parse_mode="HTML", reply_markup=main_kb(lang))
     await cb.answer()
 
-# ── Ko'p bosqichli matn (transfer) ────────────────────────
 @dp.message(F.text)
 async def h_text(msg: types.Message):
     uid   = msg.from_user.id
     lang  = get_lang(uid)
     state = user_states.get(uid)
     if not state: return
-
     text = msg.text.strip()
 
     if state['step'] == 'transfer_id':
@@ -1030,8 +893,7 @@ async def h_text(msg: types.Message):
             await msg.answer(tx(lang,"transfer_no_user"), parse_mode="HTML"); return
         user_states[uid] = {'step': 'transfer_amount', 'to_id': to_id}
         name = to_u[2] or to_u[1] or f"#{to_id}"
-        await msg.answer(tx(lang,"transfer_ask_amt", name=name, uid=to_id, pr=get_pr(uid)),
-                         parse_mode="HTML")
+        await msg.answer(tx(lang,"transfer_ask_amt", name=name, uid=to_id, pr=get_pr(uid)), parse_mode="HTML")
 
     elif state['step'] == 'transfer_amount':
         if not text.isdigit():
@@ -1044,9 +906,7 @@ async def h_text(msg: types.Message):
         if amount > pr:
             await msg.answer(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML"); return
         user_states.pop(uid, None)
-        await msg.answer(tx(lang,"transfer_confirm", to_id=to_id, amount=amount),
-                         parse_mode="HTML",
-                         reply_markup=transfer_confirm_kb(lang, to_id, amount))
+        await msg.answer(tx(lang,"transfer_confirm", to_id=to_id, amount=amount), parse_mode="HTML", reply_markup=transfer_confirm_kb(lang, to_id, amount))
 
 # ════════════════════════════════════════════════════════
 #  👮  ADMIN BUYRUQLARI
@@ -1056,15 +916,47 @@ def is_admin(uid): return uid in ADMIN_IDS
 @dp.message(Command("give"))
 async def cmd_give(msg: types.Message):
     """  /give <user_id> <amount>  """
+    try:
+        lang = get_lang(msg.from_user.id) or 'uz'
+    except:
+        lang = 'uz'
+
     if not is_admin(msg.from_user.id):
-        await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
+        await msg.answer(tx(lang, "admin_only"))
+        return
+
     p = msg.text.split()
-    if len(p) != 3 or not p[1].isdigit() or not p[2].isdigit():
-        await msg.answer("❌ Format: /give <user_id> <miqdor>"); return
-    uid, amount = int(p[1]), int(p[2])
-    change_pr(uid, amount)
-    lang = get_lang(msg.from_user.id)
-    await msg.answer(tx(lang,"admin_ok", uid=uid, amount=amount, bal=get_pr(uid)), parse_mode="HTML")
+    if len(p) != 3:
+        await msg.answer("❌ Format xato! To'g'ri format: `/give [ID] [MIQDOR]`", parse_mode="Markdown")
+        return
+
+    try:
+        target_uid = int(p[1])
+        amount = int(p[2])
+        
+        conn = dbc()
+        user_exists = conn.execute("SELECT user_id FROM users WHERE user_id=?", (target_uid,)).fetchone()
+        
+        if not user_exists:
+            conn.close()
+            await msg.answer(f"❌ ID: {target_uid} foydalanuvchi bot bazasida topilmadi! (U kamida bir marta botga kirib /start bosgan bo'lishi kerak.)")
+            return
+            
+        conn.execute("UPDATE users SET pr = pr + ? WHERE user_id = ?", (amount, target_uid))
+        conn.commit()
+        conn.close()
+
+        current_bal = get_pr(target_uid)
+        await msg.answer(tx(lang, "admin_ok", uid=target_uid, amount=amount, bal=current_bal), parse_mode="HTML")
+        
+        try:
+            await bot_obj.send_message(target_uid, f"🎁 Admin tomonidan hisobingizga <b>{amount:,} PR</b> qo'shildi!", parse_mode="HTML")
+        except: pass
+
+    except ValueError:
+        await msg.answer("❌ Xato! ID va Miqdor faqat butun sonlardan iborat bo'lishi kerak!")
+    except Exception as e:
+        await msg.answer(f"⚙️ Tizimda xatolik yuz berdi:\n<code>{str(e)}</code>", parse_mode="HTML")
 
 @dp.message(Command("rate"))
 async def cmd_rate(msg: types.Message):
