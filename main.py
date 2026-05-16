@@ -34,7 +34,7 @@ bot_obj = Bot(token=TOKEN)
 dp      = Dispatcher()
 user_states = {}
 game_timers = {}
-
+waiting_timers = {}
 # ════════════════════════════════════════════════════════
 #  🗄️  DATABASE (PostgreSQL)
 # ════════════════════════════════════════════════════════
@@ -462,6 +462,7 @@ def stakes_kb(lang):
         row.append(InlineKeyboardButton(text=f"{s:,} PR", callback_data=f"newroom_{s}"))
         if len(row) == 3: rows.append(row); row = []
     if row: rows.append(row)
+    rows.append([InlineKeyboardButton(text="✏️ O'z miqdorimni kiritaman", callback_data="custom_stake")])
     rows.append([InlineKeyboardButton(text=tx(lang,"btn_back"), callback_data="game_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -527,6 +528,18 @@ async def send_gif_and_text(chat_id, is_win, text):
         await bot_obj.send_message(chat_id, text, parse_mode="HTML")
 
 async def timeout_task(gid, stake, p1_id, p2_id):
+async def waiting_room_timeout(gid, uid):
+    await asyncio.sleep(40)
+    game = get_game(gid)
+    if not game or game[4] != 'waiting': return
+    cancel_game_db(gid)
+    waiting_timers.pop(gid, None)
+    lang = get_lang(uid)
+    try:
+        await bot_obj.send_message(uid,
+            "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida hech kim kirmadi.",
+            parse_mode="HTML")
+    except: pass
     await asyncio.sleep(THROW_TIMEOUT)
     game = get_game(gid)
     if not game or game[4] not in ('p1_turn', 'p2_turn'): return
@@ -767,9 +780,21 @@ async def cb_newroom(cb: types.CallbackQuery):
     if pr < stake:
         await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK), show_alert=True); return
     gid = create_game(uid, stake)
+    task = asyncio.create_task(waiting_room_timeout(gid, uid))
+    waiting_timers[gid] = task
     await cb.message.edit_text(tx(lang,"room_created", gid=gid, stake=stake), parse_mode="HTML")
     await cb.answer()
-
+@dp.callback_query(F.data == "custom_stake")
+async def cb_custom_stake(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    if has_waiting(uid):
+        await cb.answer("⏳ Siz allaqachon xona kutmoqdasiz!", show_alert=True); return
+    user_states[uid] = {'step': 'custom_stake'}
+    await cb.message.edit_text(
+        "✏️ <b>O'z stavkangizni kiriting</b>\n\n💡 100 dan 10,000 gacha son kiriting:",
+        parse_mode="HTML"
+    )
+    await cb.answer()
 @dp.callback_query(F.data.startswith("join_"))
 async def cb_join(cb: types.CallbackQuery):
     uid = cb.from_user.id; lang = get_lang(uid)
@@ -785,6 +810,9 @@ async def cb_join(cb: types.CallbackQuery):
     if p1_pr < stake:
         cancel_waiting(p1)
         await cb.answer("❌ Xona yaratuvchida PR yetarli emas!", show_alert=True); return
+    if gid in waiting_timers:
+        waiting_timers[gid].cancel()
+        del waiting_timers[gid]
     change_pr(uid, -stake); change_pr(p1, -stake)
     start_game(gid, uid)
     p1_lang = get_lang(p1); p2_lang = lang
@@ -942,7 +970,23 @@ async def h_text(msg: types.Message):
             parse_mode="HTML",
             reply_markup=obmen_confirm_kb(lang, "usdtopr", amount_pr, usd_key)
         )
-
+    elif state['step'] == 'custom_stake':
+        if not text.isdigit():
+            await msg.answer("❌ Faqat raqam kiriting!"); return
+        amount = int(text)
+        if amount < 100 or amount > 10000:
+            await msg.answer("❌ 100 dan 10,000 gacha son kiriting!"); return
+        pr = get_pr(uid)
+        if pr < amount:
+            await msg.answer(f"❌ Yetarli PR yo'q! Sizda: {pr:,} PR"); return
+        user_states.pop(uid, None)
+        gid = create_game(uid, amount)
+        task = asyncio.create_task(waiting_room_timeout(gid, uid))
+        waiting_timers[gid] = task
+        await msg.answer(
+            f"⏳ <b>Xona yaratildi!</b>\n\n🆔 Xona ID: <code>#{gid}</code>\n🎟 Stavka: <b>{amount:,} PR</b>\n\nRaqib kutilmoqda... 👀",
+            parse_mode="HTML"
+        )
 @dp.message(F.text.in_(["🎁 10,000 PR tekinga olish","🎁 10,000 PR бесплатно"]))
 async def h_channel_bonus(msg: types.Message):
     uid = msg.from_user.id
