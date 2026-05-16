@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════╗
-║         PRm4u GAME BOT  v2.0  — @mirodil_info        ║
+║         PRm4u GAME BOT  v2.1  — @mirodil_info        ║
 ║  O'rnatish:  pip install aiogram aiohttp             ║
 ╚══════════════════════════════════════════════════════╝
 """
@@ -118,8 +118,10 @@ def do_transfer(from_id, to_id, amount):
     conn = dbc()
     fp = conn.execute("SELECT pr FROM users WHERE user_id=?", (from_id,)).fetchone()
     tu = conn.execute("SELECT user_id FROM users WHERE user_id=?", (to_id,)).fetchone()
-    if not fp or fp[0] < amount or not tu:
-        conn.close(); return False, "no_funds" if fp and fp[0] < amount else "no_user"
+    if not fp or not tu:
+        conn.close(); return False, "no_user"
+    if fp[0] < amount:
+        conn.close(); return False, "no_funds"
     conn.execute("UPDATE users SET pr=pr-? WHERE user_id=?", (amount, from_id))
     conn.execute("UPDATE users SET pr=pr+? WHERE user_id=?", (amount, to_id))
     conn.execute("INSERT INTO transfers (from_id,to_id,amount,created_at) VALUES (?,?,?,?)",
@@ -136,8 +138,10 @@ def claim_bonus(uid):
             diff = now - datetime.fromisoformat(last)
             if diff.total_seconds() < 86400:
                 rem = timedelta(seconds=86400) - diff
-                h, s = divmod(int(rem.total_seconds()), 3600)
-                return False, (h, s // 60)
+                total_secs = int(rem.total_seconds())
+                h = total_secs // 3600
+                m = (total_secs % 3600) // 60   # ✅ BUG FIX: to'g'ri daqiqa hisoblash
+                return False, (h, m)
         except: pass
     amount = random.randint(1, 100)
     conn = dbc()
@@ -280,7 +284,7 @@ T = {
 ),
 "your_turn":          "🎲 Sizning navbatingiz! Tosh tashlang:",
 "wait_turn":          "⏳ Raqib tashlashini kuting...",
-"p1_threw":           "🎲 <code>#{p1}</code> tosh tashladi: <b>{val}</b>\n\n🔵 Endi <code>#{p2}</code> navbati!",
+"p1_threw":           "🎲 <code>#{p1}</code> tosh tashladi!\n\n🔵 Endi <code>#{p2}</code> navbati!",
 "your_turn_now":      "🎲 Endi sizning navbatingiz! Tosh tashlang:",
 "timeout_cancel":     "⏰ <b>Vaqt tugadi!</b>\n\nO'yin bekor qilindi, PR lar qaytarildi.",
 "win_text":(
@@ -391,7 +395,7 @@ T = {
 ),
 "your_turn":          "🎲 Ваш ход! Бросьте кость:",
 "wait_turn":          "⏳ Ждите хода соперника...",
-"p1_threw":           "🎲 <code>#{p1}</code> бросил: <b>{val}</b>\n\n🔵 Теперь ход <code>#{p2}</code>!",
+"p1_threw":           "🎲 <code>#{p1}</code> бросил кость!\n\n🔵 Теперь ход <code>#{p2}</code>!",
 "your_turn_now":      "🎲 Теперь ваш ход! Бросьте кость:",
 "timeout_cancel":     "⏰ <b>Время вышло!</b>\n\nИгра отменена, ставки возвращены.",
 "win_text":(
@@ -527,35 +531,43 @@ def support_kb():
 #  🎮  O'YIN YORDAMCHILARI
 # ════════════════════════════════════════════════════════
 async def send_gif_and_text(chat_id, is_win, text):
+    """
+    ✅ BUG FIX: Asl kodda send_message IKKI MARTA chaqirilgan edi.
+    Endi faqat bir marta xabar yuboriladi.
+    """
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
-    sent = False
+
+    # 1-urinish: send_animation (GIF)
     try:
         await bot_obj.send_animation(
             chat_id, animation=gif,
             caption=text, parse_mode="HTML"
         )
-        sent = True
-    except: pass
-    if not sent:
-        try:
-            await bot_obj.send_document(
-                chat_id, document=gif,
-                caption=text, parse_mode="HTML"
-            )
-            sent = True
-        except: pass
-    if not sent:
-        await bot_obj.send_message(chat_id, text, parse_mode="HTML")
-    if not sent:
-        try:
-            await bot_obj.send_document(chat_id, document=gif)
-            sent = True
-        except: pass
+        return  # ✅ Muvaffaqiyatli — chiqamiz
+    except Exception:
+        pass
+
+    # 2-urinish: send_document
+    try:
+        await bot_obj.send_document(
+            chat_id, document=gif,
+            caption=text, parse_mode="HTML"
+        )
+        return  # ✅ Muvaffaqiyatli — chiqamiz
+    except Exception:
+        pass
+
     # 3-urinish: send_video
-    if not sent:
-        try:
-            await bot_obj.send_video(chat_id, video=gif)
-        except: pass
+    try:
+        await bot_obj.send_video(
+            chat_id, video=gif,
+            caption=text, parse_mode="HTML"
+        )
+        return  # ✅ Muvaffaqiyatli — chiqamiz
+    except Exception:
+        pass
+
+    # Oxirgi fallback: faqat matn
     await bot_obj.send_message(chat_id, text, parse_mode="HTML")
 
 async def timeout_task(gid, stake, p1_id, p2_id):
@@ -571,7 +583,8 @@ async def timeout_task(gid, stake, p1_id, p2_id):
         lang = get_lang(uid)
         try:
             await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
-        except: pass
+        except Exception:
+            pass
 
 async def resolve_game(gid):
     """Ikki tosh ham tashlangandan keyin natijani hisobling"""
@@ -679,10 +692,14 @@ async def cb_tr_yes(cb: types.CallbackQuery):
         try:
             await bot_obj.send_message(to_id, tx(to_lang,"transfer_recv",
                                                   from_id=uid, amount=amount), parse_mode="HTML")
-        except: pass
+        except Exception:
+            pass
     else:
         pr = get_pr(uid)
-        await cb.message.edit_text(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML")
+        if reason == "no_user":
+            await cb.message.edit_text(tx(lang,"transfer_no_user"), parse_mode="HTML")
+        else:
+            await cb.message.edit_text(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML")
     user_states.pop(uid, None)
     await cb.answer()
 
@@ -835,11 +852,14 @@ async def cb_join(cb: types.CallbackQuery):
     try:
         await bot_obj.send_message(p1, started_text_p1, parse_mode="HTML",
                                    reply_markup=throw_kb(p1_lang, gid))
-    except: pass
+    except Exception:
+        pass
 
     # P2 ga wait xabari
-    await cb.message.answer(started_text_p2 + "\n\n" + tx(p2_lang,"wait_turn"),
-                             parse_mode="HTML")
+    await cb.message.answer(
+        started_text_p2 + "\n\n" + tx(p2_lang,"wait_turn"),
+        parse_mode="HTML"
+    )
 
     # Timeout vazifasini boshlash
     task = asyncio.create_task(timeout_task(gid, stake, p1, uid))
@@ -871,8 +891,10 @@ async def cb_throw(cb: types.CallbackQuery):
         await cb.answer("❌ Noto'g'ri holat!", show_alert=True); return
 
     # Tugmani o'chirib qo'yamiz
-    try: await cb.message.edit_reply_markup()
-    except: pass
+    try:
+        await cb.message.edit_reply_markup()
+    except Exception:
+        pass
 
     # Dice tashlash
     dice_msg = await bot_obj.send_dice(cb.message.chat.id, emoji="🎲")
@@ -882,16 +904,24 @@ async def cb_throw(cb: types.CallbackQuery):
     if status == 'p1_turn':
         set_p1_dice(gid, val)
         p2_lang = get_lang(p2)
-        # P1 ga faqat o'ziniki ko'rinadi
-        await bot_obj.send_message(p1,
-            f"✅ Siz tosh taShladingiz: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...",
-            parse_mode="HTML")
-        # P2 ga faqat navbat xabari — raqam ko'rinmaydi!
+
+        # P1 ga o'z natijasi
+        await bot_obj.send_message(
+            p1,
+            f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...",
+            parse_mode="HTML"
+        )
+        # P2 ga navbat xabari — P1 ning raqami ko'rinmaydi (adolatli o'yin)
         try:
-            await bot_obj.send_message(p2,
-                tx(p2_lang,"your_turn_now"),
-                parse_mode="HTML", reply_markup=throw_kb(p2_lang, gid))
-        except: pass
+            await bot_obj.send_message(
+                p2,
+                tx(p2_lang, "your_turn_now"),
+                parse_mode="HTML",
+                reply_markup=throw_kb(p2_lang, gid)
+            )
+        except Exception:
+            pass
+
         # Eski timeout ni bekor qilib yangi boshlash
         if gid in game_timers:
             game_timers[gid].cancel()
@@ -900,10 +930,13 @@ async def cb_throw(cb: types.CallbackQuery):
 
     else:  # p2_turn
         set_p2_dice(gid, val)
-        # P2 ga o'ziniki ko'rinadi
-        await bot_obj.send_message(p2,
-            f"✅ Siz tosh taShladingiz: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...",
-            parse_mode="HTML")
+
+        # P2 ga o'z natijasi
+        await bot_obj.send_message(
+            p2,
+            f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...",
+            parse_mode="HTML"
+        )
         # Timeoutni bekor qil
         if gid in game_timers:
             game_timers[gid].cancel()
@@ -922,7 +955,8 @@ async def h_bonus(msg: types.Message):
     ok, result = claim_bonus(uid)
     if not ok:
         h, m = result
-        await msg.answer(tx(lang,"bonus_wait", h=h, m=m), parse_mode="HTML"); return
+        await msg.answer(tx(lang,"bonus_wait", h=h, m=m), parse_mode="HTML")
+        return
     wait = await msg.answer(tx(lang,"bonus_spin"))
     await bot_obj.send_dice(msg.chat.id, emoji="🎰")
     await asyncio.sleep(3)
@@ -1052,7 +1086,7 @@ async def cmd_stats(msg: types.Message):
 async def main():
     init_db()
     print("=" * 50)
-    print("  ✅  PRm4u Bot v2.0 ishga tushdi!")
+    print("  ✅  PRm4u Bot v2.1 ishga tushdi!")
     print(f"  👮  Admin: {ADMIN_IDS}")
     print(f"  💸  Komissiya: {COMMISSION_PCT}%")
     print(f"  ⏱   Tosh tashlash vaqti: {THROW_TIMEOUT}s")
