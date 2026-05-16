@@ -1,11 +1,11 @@
 """
 ╔══════════════════════════════════════════════════════╗
 ║         PRm4u GAME BOT  v2.1  — @mirodil_info        ║
-║  O'rnatish:  pip install aiogram aiohttp             ║
+║  O'rnatish:  pip install aiogram aiohttp psycopg2    ║
 ╚══════════════════════════════════════════════════════╝
 """
 
-import asyncio, sqlite3, random, aiohttp
+import asyncio, os, psycopg2, random, aiohttp
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -27,7 +27,9 @@ LOSS_GIF_ID    = "CgACAgQAAxkBAAFJuWdqB4DBtfQlp_oKd8LheQFKFCEsCAACpQIAAqnITFF-EH
 STAKES         = [500, 1_000, 2_000, 3_000, 5_000, 10_000]
 THROW_TIMEOUT  = 180             # 3 daqiqa — tosh tashlash vaqti
 
-DB = "prm4u.db"
+# DATABASE URL setting (PostgreSQL)
+DATABASE_URL   = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/prm4u")
+
 bot_obj = Bot(token=TOKEN)
 dp      = Dispatcher()
 
@@ -36,97 +38,139 @@ user_states   = {}   # {uid: {'step': ..., ...}}
 game_timers   = {}   # {gid: asyncio.Task}
 
 # ════════════════════════════════════════════════════════
-#  🗄️  DATABASE
+#  🗄️  DATABASE (POSTGRESQL)
 # ════════════════════════════════════════════════════════
-def init_db():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS users (
-        user_id   INTEGER PRIMARY KEY,
-        username  TEXT    DEFAULT '',
-        full_name TEXT    DEFAULT '',
-        pr        INTEGER DEFAULT 1000,
-        last_bonus TEXT   DEFAULT '',
-        lang      TEXT    DEFAULT 'uz',
-        wins      INTEGER DEFAULT 0,
-        losses    INTEGER DEFAULT 0
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS games (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        creator_id INTEGER,
-        joiner_id  INTEGER DEFAULT 0,
-        stake      INTEGER,
-        status     TEXT    DEFAULT 'waiting',
-        p1_dice    INTEGER DEFAULT 0,
-        p2_dice    INTEGER DEFAULT 0,
-        winner_id  INTEGER DEFAULT 0,
-        created_at TEXT,
-        started_at TEXT    DEFAULT ''
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS transfers (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        from_id    INTEGER,
-        to_id      INTEGER,
-        amount     INTEGER,
-        created_at TEXT
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY, value TEXT
-    )""")
-    c.execute("INSERT OR IGNORE INTO settings VALUES ('usd_uzs','12700')")
-    c.execute("INSERT OR IGNORE INTO settings VALUES ('rate_fetch','')")
-    conn.commit(); conn.close()
+def dbc():
+    url = DATABASE_URL
+    # Ba'zi hostlarda (Render, Heroku) eskirgan 'postgres://' boshlanishini tuzatish
+    if url and url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(url)
 
-def dbc(): return sqlite3.connect(DB)
+def init_db():
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS users (
+            user_id   BIGINT PRIMARY KEY,
+            username  TEXT    DEFAULT '',
+            full_name TEXT    DEFAULT '',
+            pr        INTEGER DEFAULT 1000,
+            last_bonus TEXT   DEFAULT '',
+            lang      TEXT    DEFAULT 'uz',
+            wins      INTEGER DEFAULT 0,
+            losses    INTEGER DEFAULT 0
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS games (
+            id         SERIAL PRIMARY KEY,
+            creator_id BIGINT,
+            joiner_id  BIGINT DEFAULT 0,
+            stake      INTEGER,
+            status     TEXT    DEFAULT 'waiting',
+            p1_dice    INTEGER DEFAULT 0,
+            p2_dice    INTEGER DEFAULT 0,
+            winner_id  BIGINT DEFAULT 0,
+            created_at TEXT,
+            started_at TEXT    DEFAULT ''
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS transfers (
+            id         SERIAL PRIMARY KEY,
+            from_id    BIGINT,
+            to_id      BIGINT,
+            amount     INTEGER,
+            created_at TEXT
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY, value TEXT
+        )""")
+        c.execute("INSERT INTO settings VALUES ('usd_uzs','12700') ON CONFLICT (key) DO NOTHING")
+        c.execute("INSERT INTO settings VALUES ('rate_fetch','') ON CONFLICT (key) DO NOTHING")
+    conn.commit()
+    conn.close()
 
 def register(uid, username, full_name):
     conn = dbc()
-    conn.execute("INSERT OR IGNORE INTO users (user_id,username,full_name) VALUES (?,?,?)",
-                 (uid, username or "", full_name or ""))
-    conn.commit(); conn.close()
+    with conn.cursor() as c:
+        c.execute("INSERT INTO users (user_id,username,full_name) VALUES (%s,%s,%s) ON CONFLICT (user_id) DO NOTHING",
+                  (uid, username or "", full_name or ""))
+    conn.commit()
+    conn.close()
 
 def get_user(uid):
-    conn = dbc(); r = conn.execute("SELECT * FROM users WHERE user_id=?", (uid,)).fetchone()
-    conn.close(); return r
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
+        r = c.fetchone()
+    conn.close()
+    return r
 
 def get_pr(uid):   u = get_user(uid); return u[3] if u else 0
 def get_lang(uid): u = get_user(uid); return u[5] if u else 'uz'
 def get_wl(uid):   u = get_user(uid); return (u[6], u[7]) if u else (0, 0)
 
 def set_lang(uid, lang):
-    conn = dbc(); conn.execute("UPDATE users SET lang=? WHERE user_id=?", (lang,uid)); conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE users SET lang=%s WHERE user_id=%s", (lang, uid))
+    conn.commit()
+    conn.close()
 
 def change_pr(uid, delta):
-    conn = dbc(); conn.execute("UPDATE users SET pr=MAX(0,pr+?) WHERE user_id=?", (delta,uid)); conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE users SET pr=GREATEST(0, pr+%s) WHERE user_id=%s", (delta, uid))
+    conn.commit()
+    conn.close()
 
 def add_win(uid):
-    conn = dbc(); conn.execute("UPDATE users SET wins=wins+1 WHERE user_id=?", (uid,)); conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE users SET wins=wins+1 WHERE user_id=%s", (uid,))
+    conn.commit()
+    conn.close()
 
 def add_loss(uid):
-    conn = dbc(); conn.execute("UPDATE users SET losses=losses+1 WHERE user_id=?", (uid,)); conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE users SET losses=losses+1 WHERE user_id=%s", (uid,))
+    conn.commit()
+    conn.close()
 
 def get_setting(k):
-    conn = dbc(); r = conn.execute("SELECT value FROM settings WHERE key=?", (k,)).fetchone()
-    conn.close(); return r[0] if r else None
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("SELECT value FROM settings WHERE key=%s", (k,))
+        r = c.fetchone()
+    conn.close()
+    return r[0] if r else None
 
 def set_setting(k, v):
-    conn = dbc(); conn.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (k,str(v)))
-    conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("INSERT INTO settings VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (k, str(v)))
+    conn.commit()
+    conn.close()
 
 # ── Transfer ─────────────────────────────────────────────
 def do_transfer(from_id, to_id, amount):
     conn = dbc()
-    fp = conn.execute("SELECT pr FROM users WHERE user_id=?", (from_id,)).fetchone()
-    tu = conn.execute("SELECT user_id FROM users WHERE user_id=?", (to_id,)).fetchone()
-    if not fp or not tu:
-        conn.close(); return False, "no_user"
-    if fp[0] < amount:
-        conn.close(); return False, "no_funds"
-    conn.execute("UPDATE users SET pr=pr-? WHERE user_id=?", (amount, from_id))
-    conn.execute("UPDATE users SET pr=pr+? WHERE user_id=?", (amount, to_id))
-    conn.execute("INSERT INTO transfers (from_id,to_id,amount,created_at) VALUES (?,?,?,?)",
-                 (from_id, to_id, amount, datetime.now().isoformat()))
-    conn.commit(); conn.close(); return True, "ok"
+    with conn.cursor() as c:
+        c.execute("SELECT pr FROM users WHERE user_id=%s", (from_id,))
+        fp = c.fetchone()
+        c.execute("SELECT user_id FROM users WHERE user_id=%s", (to_id,))
+        tu = c.fetchone()
+        if not fp or not tu:
+            conn.close()
+            return False, "no_user"
+        if fp[0] < amount:
+            conn.close()
+            return False, "no_funds"
+        c.execute("UPDATE users SET pr=pr-%s WHERE user_id=%s", (amount, from_id))
+        c.execute("UPDATE users SET pr=pr+%s WHERE user_id=%s", (amount, to_id))
+        c.execute("INSERT INTO transfers (from_id,to_id,amount,created_at) VALUES (%s,%s,%s,%s)",
+                  (from_id, to_id, amount, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    return True, "ok"
 
 # ── Bonus ────────────────────────────────────────────────
 def claim_bonus(uid):
@@ -140,14 +184,17 @@ def claim_bonus(uid):
                 rem = timedelta(seconds=86400) - diff
                 total_secs = int(rem.total_seconds())
                 h = total_secs // 3600
-                m = (total_secs % 3600) // 60   # ✅ BUG FIX: to'g'ri daqiqa hisoblash
+                m = (total_secs % 3600) // 60
                 return False, (h, m)
         except: pass
     amount = random.randint(1, 100)
     conn = dbc()
-    conn.execute("UPDATE users SET pr=pr+?,last_bonus=? WHERE user_id=?",
-                 (amount, now.isoformat(), uid))
-    conn.commit(); conn.close(); return True, amount
+    with conn.cursor() as c:
+        c.execute("UPDATE users SET pr=pr+%s,last_bonus=%s WHERE user_id=%s",
+                  (amount, now.isoformat(), uid))
+    conn.commit()
+    conn.close()
+    return True, amount
 
 # ── USD kurs (kuniga 1 marta) ────────────────────────────
 async def get_usd_uzs():
@@ -173,57 +220,96 @@ async def get_usd_uzs():
 # ── Game DB ──────────────────────────────────────────────
 def create_game(uid, stake):
     conn = dbc()
-    cur  = conn.execute("INSERT INTO games (creator_id,stake,created_at) VALUES (?,?,?)",
-                        (uid, stake, datetime.now().isoformat()))
-    gid  = cur.lastrowid; conn.commit(); conn.close(); return gid
+    with conn.cursor() as c:
+        c.execute("INSERT INTO games (creator_id,stake,created_at) VALUES (%s,%s,%s) RETURNING id",
+                  (uid, stake, datetime.now().isoformat()))
+        gid = c.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return gid
 
 def get_waiting_games(exclude_uid=None):
     conn = dbc()
-    q = "SELECT id,creator_id,stake FROM games WHERE status='waiting'"
-    if exclude_uid: q += f" AND creator_id!={exclude_uid}"
-    q += " ORDER BY created_at LIMIT 20"
-    r = conn.execute(q).fetchall(); conn.close(); return r
+    with conn.cursor() as c:
+        if exclude_uid:
+            q = "SELECT id,creator_id,stake FROM games WHERE status='waiting' AND creator_id!=%s ORDER BY created_at LIMIT 20"
+            c.execute(q, (exclude_uid,))
+        else:
+            q = "SELECT id,creator_id,stake FROM games WHERE status='waiting' ORDER BY created_at LIMIT 20"
+            c.execute(q)
+        r = c.fetchall()
+    conn.close()
+    return r
 
 def get_game(gid):
-    conn = dbc(); r = conn.execute("SELECT * FROM games WHERE id=?", (gid,)).fetchone()
-    conn.close(); return r
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("SELECT * FROM games WHERE id=%s", (gid,))
+        r = c.fetchone()
+    conn.close()
+    return r
 
 def start_game(gid, joiner_id):
     conn = dbc()
-    conn.execute("UPDATE games SET joiner_id=?,status='p1_turn',started_at=? WHERE id=?",
-                 (joiner_id, datetime.now().isoformat(), gid))
-    conn.commit(); conn.close()
+    with conn.cursor() as c:
+        c.execute("UPDATE games SET joiner_id=%s,status='p1_turn',started_at=%s WHERE id=%s",
+                  (joiner_id, datetime.now().isoformat(), gid))
+    conn.commit()
+    conn.close()
 
 def set_p1_dice(gid, val):
-    conn = dbc(); conn.execute("UPDATE games SET p1_dice=?,status='p2_turn' WHERE id=?", (val,gid))
-    conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE games SET p1_dice=%s,status='p2_turn' WHERE id=%s", (val, gid))
+    conn.commit()
+    conn.close()
 
 def set_p2_dice(gid, val):
-    conn = dbc(); conn.execute("UPDATE games SET p2_dice=?,status='resolving' WHERE id=?", (val,gid))
-    conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE games SET p2_dice=%s,status='resolving' WHERE id=%s", (val, gid))
+    conn.commit()
+    conn.close()
 
 def finish_game_db(gid, winner_id):
-    conn = dbc(); conn.execute("UPDATE games SET winner_id=?,status='finished' WHERE id=?", (winner_id,gid))
-    conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE games SET winner_id=%s,status='finished' WHERE id=%s", (winner_id, gid))
+    conn.commit()
+    conn.close()
 
 def cancel_game_db(gid):
-    conn = dbc(); conn.execute("UPDATE games SET status='cancelled' WHERE id=?", (gid,))
-    conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("UPDATE games SET status='cancelled' WHERE id=%s", (gid,))
+    conn.commit()
+    conn.close()
 
 def cancel_waiting(uid):
-    conn = dbc(); conn.execute("DELETE FROM games WHERE creator_id=? AND status='waiting'", (uid,))
-    conn.commit(); conn.close()
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("DELETE FROM games WHERE creator_id=%s AND status='waiting'", (uid,))
+    conn.commit()
+    conn.close()
 
 def has_waiting(uid):
-    conn = dbc(); r = conn.execute("SELECT id FROM games WHERE creator_id=? AND status='waiting'", (uid,)).fetchone()
-    conn.close(); return r[0] if r else None
+    conn = dbc()
+    with conn.cursor() as c:
+        c.execute("SELECT id FROM games WHERE creator_id=%s AND status='waiting'", (uid,))
+        r = c.fetchone()
+    conn.close()
+    return r[0] if r else None
 
 def user_active_game(uid):
     conn = dbc()
-    r = conn.execute(
-        "SELECT * FROM games WHERE (creator_id=? OR joiner_id=?) AND status IN ('p1_turn','p2_turn')",
-        (uid, uid)
-    ).fetchone(); conn.close(); return r
+    with conn.cursor() as c:
+        c.execute(
+            "SELECT * FROM games WHERE (creator_id=%s OR joiner_id=%s) AND status IN ('p1_turn','p2_turn')",
+            (uid, uid)
+        )
+        r = c.fetchone()
+    conn.close()
+    return r
 
 # ════════════════════════════════════════════════════════
 #  💬  MATNLAR
@@ -350,7 +436,7 @@ T = {
     "👇 <b>Ваш баланс PR и $</b>\n\n"
     "🎟 {pr:,} PR\n"
     "💰 {usd:.4f} $\n\n"
-    "Курс: 1$ = {uzs:,} сум\n\n"
+    "Крук: 1$ = {uzs:,} сум\n\n"
     "💡 Купить PR:\n{support}"
 ),
 "profile":(
@@ -531,43 +617,23 @@ def support_kb():
 #  🎮  O'YIN YORDAMCHILARI
 # ════════════════════════════════════════════════════════
 async def send_gif_and_text(chat_id, is_win, text):
-    """
-    ✅ BUG FIX: Asl kodda send_message IKKI MARTA chaqirilgan edi.
-    Endi faqat bir marta xabar yuboriladi.
-    """
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
 
-    # 1-urinish: send_animation (GIF)
     try:
-        await bot_obj.send_animation(
-            chat_id, animation=gif,
-            caption=text, parse_mode="HTML"
-        )
-        return  # ✅ Muvaffaqiyatli — chiqamiz
-    except Exception:
-        pass
+        await bot_obj.send_animation(chat_id, animation=gif, caption=text, parse_mode="HTML")
+        return
+    except Exception: pass
 
-    # 2-urinish: send_document
     try:
-        await bot_obj.send_document(
-            chat_id, document=gif,
-            caption=text, parse_mode="HTML"
-        )
-        return  # ✅ Muvaffaqiyatli — chiqamiz
-    except Exception:
-        pass
+        await bot_obj.send_document(chat_id, document=gif, caption=text, parse_mode="HTML")
+        return
+    except Exception: pass
 
-    # 3-urinish: send_video
     try:
-        await bot_obj.send_video(
-            chat_id, video=gif,
-            caption=text, parse_mode="HTML"
-        )
-        return  # ✅ Muvaffaqiyatli — chiqamiz
-    except Exception:
-        pass
+        await bot_obj.send_video(chat_id, video=gif, caption=text, parse_mode="HTML")
+        return
+    except Exception: pass
 
-    # Oxirgi fallback: faqat matn
     await bot_obj.send_message(chat_id, text, parse_mode="HTML")
 
 async def timeout_task(gid, stake, p1_id, p2_id):
@@ -575,7 +641,6 @@ async def timeout_task(gid, stake, p1_id, p2_id):
     game = get_game(gid)
     if not game or game[4] not in ('p1_turn', 'p2_turn'):
         return
-    # Bekor qilish va PR qaytarish
     cancel_game_db(gid)
     change_pr(p1_id, stake)
     change_pr(p2_id, stake)
@@ -583,8 +648,8 @@ async def timeout_task(gid, stake, p1_id, p2_id):
         lang = get_lang(uid)
         try:
             await bot_obj.send_message(uid, tx(lang, "timeout_cancel"), parse_mode="HTML")
-        except Exception:
-            pass
+        except Exception: pass
+
 async def waiting_room_timeout(gid, uid):
     await asyncio.sleep(40)
     game = get_game(gid)
@@ -593,16 +658,10 @@ async def waiting_room_timeout(gid, uid):
     cancel_game_db(gid)
     lang = get_lang(uid)
     try:
-        await bot_obj.send_message(
-            uid,
-            "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida raqib topilmadi.",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
+        await bot_obj.send_message(uid, "⏰ <b>Xona yopildi!</b>\n\n40 sekund ichida raqib topilmadi.", parse_mode="HTML")
+    except Exception: pass
 
 async def resolve_game(gid):
-    """Ikki tosh ham tashlangandan keyin natijani hisobling"""
     game = get_game(gid)
     if not game: return
     gid_, p1, p2, stake = game[0], game[1], game[2], game[3]
@@ -611,13 +670,11 @@ async def resolve_game(gid):
     commission     = int(stake * COMMISSION_PCT / 100)
 
     if p1_val == p2_val:
-        # Durrang
         change_pr(p1, stake); change_pr(p2, stake)
         finish_game_db(gid, 0)
         for uid, lang in [(p1, lang1), (p2, lang2)]:
             bal = get_pr(uid)
-            await send_gif_and_text(uid, False,
-                tx(lang,"draw_text", gid=gid, stake=stake, val=p1_val, bal=bal))
+            await send_gif_and_text(uid, False, tx(lang,"draw_text", gid=gid, stake=stake, val=p1_val, bal=bal))
     else:
         winner_id  = p1 if p1_val > p2_val else p2
         loser_id   = p2 if p1_val > p2_val else p1
@@ -626,7 +683,6 @@ async def resolve_game(gid):
 
         winnings   = (stake * 2) - commission
         change_pr(winner_id, winnings)
-        # Komissiya adminga
         if ADMIN_IDS:
             change_pr(ADMIN_IDS[0], commission)
 
@@ -672,10 +728,7 @@ async def h_balance(msg: types.Message):
     pr   = get_pr(uid)
     usd  = pr / PR_PER_DOLLAR
     uzs  = await get_usd_uzs()
-    await msg.answer(
-        tx(lang,"balance", pr=pr, usd=usd, uzs=uzs, support=SUPPORT_LINK),
-        parse_mode="HTML", reply_markup=balance_kb(lang)
-    )
+    await msg.answer(tx(lang,"balance", pr=pr, usd=usd, uzs=uzs, support=SUPPORT_LINK), parse_mode="HTML", reply_markup=balance_kb(lang))
 
 # ── Transfer boshlash ────────────────────────────────────
 @dp.callback_query(F.data == "transfer_start")
@@ -703,16 +756,11 @@ async def cb_tr_yes(cb: types.CallbackQuery):
     amount  = int(parts[3])
     ok, reason = do_transfer(uid, to_id, amount)
     if ok:
-        await cb.message.edit_text(
-            tx(lang,"transfer_ok", to_id=to_id, amount=amount),
-            parse_mode="HTML"
-        )
+        await cb.message.edit_text(tx(lang,"transfer_ok", to_id=to_id, amount=amount), parse_mode="HTML")
         to_lang = get_lang(to_id)
         try:
-            await bot_obj.send_message(to_id, tx(to_lang,"transfer_recv",
-                                                  from_id=uid, amount=amount), parse_mode="HTML")
-        except Exception:
-            pass
+            await bot_obj.send_message(to_id, tx(to_lang,"transfer_recv", from_id=uid, amount=amount), parse_mode="HTML")
+        except Exception: pass
     else:
         pr = get_pr(uid)
         if reason == "no_user":
@@ -743,8 +791,7 @@ async def cb_game_back(cb: types.CallbackQuery):
     uid  = cb.from_user.id
     lang = get_lang(uid)
     pr   = get_pr(uid)
-    await cb.message.edit_text(tx(lang,"game_menu", pr=pr), parse_mode="HTML",
-                                reply_markup=game_main_kb(lang))
+    await cb.message.edit_text(tx(lang,"game_menu", pr=pr), parse_mode="HTML", reply_markup=game_main_kb(lang))
     await cb.answer()
 
 # ── Xonalar ro'yxati ─────────────────────────────────────
@@ -760,10 +807,7 @@ async def cb_rooms(cb: types.CallbackQuery):
                                         [InlineKeyboardButton(text=tx(lang,"btn_back"),   callback_data="game_back")],
                                     ]))
     else:
-        await cb.message.edit_text(
-            tx(lang,"rooms_list", count=len(rooms)), parse_mode="HTML",
-            reply_markup=rooms_kb(lang, rooms)
-        )
+        await cb.message.edit_text(tx(lang,"rooms_list", count=len(rooms)), parse_mode="HTML", reply_markup=rooms_kb(lang, rooms))
     await cb.answer()
 
 # ── Xona detali ──────────────────────────────────────────
@@ -775,11 +819,7 @@ async def cb_room_detail(cb: types.CallbackQuery):
     game = get_game(gid)
     if not game or game[4] != 'waiting':
         await cb.answer("❌ Xona topilmadi yoki to'lgan!", show_alert=True); return
-    await cb.message.edit_text(
-        tx(lang,"room_detail", gid=gid, creator_id=game[1], stake=game[3]),
-        parse_mode="HTML",
-        reply_markup=room_detail_kb(lang, gid, game[1])
-    )
+    await cb.message.edit_text(tx(lang,"room_detail", gid=gid, creator_id=game[1], stake=game[3]), parse_mode="HTML", reply_markup=room_detail_kb(lang, gid, game[1]))
     await cb.answer()
 
 # ── Profil ko'rish ───────────────────────────────────────
@@ -793,10 +833,7 @@ async def cb_profile(cb: types.CallbackQuery):
     wins, losses = u[6], u[7]
     pr   = u[3]
     name = u[2] or u[1] or f"#{view_id}"
-    await cb.answer(
-        tx(lang,"profile", uid=view_id, name=name, pr=pr, wins=wins, losses=losses),
-        show_alert=True
-    )
+    await cb.answer(tx(lang,"profile", uid=view_id, name=name, pr=pr, wins=wins, losses=losses), show_alert=True)
 
 # ── Yangi xona yaratish ───────────────────────────────────
 @dp.callback_query(F.data == "create_room")
@@ -805,10 +842,7 @@ async def cb_create_room(cb: types.CallbackQuery):
     lang = get_lang(uid)
     if has_waiting(uid):
         await cb.answer(tx(lang,"already_wait"), show_alert=True); return
-    await cb.message.edit_text(
-        tx(lang,"game_menu", pr=get_pr(uid)), parse_mode="HTML",
-        reply_markup=stakes_kb(lang)
-    )
+    await cb.message.edit_text(tx(lang,"game_menu", pr=get_pr(uid)), parse_mode="HTML", reply_markup=stakes_kb(lang))
     await cb.answer()
 
 @dp.callback_query(F.data.startswith("newroom_"))
@@ -818,12 +852,9 @@ async def cb_newroom(cb: types.CallbackQuery):
     stake = int(cb.data.split("_")[1])
     pr    = get_pr(uid)
     if pr < stake:
-        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK),
-                        show_alert=True); return
+        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK), show_alert=True); return
     gid = create_game(uid, stake)
-    await cb.message.edit_text(
-        tx(lang,"room_created", gid=gid, stake=stake), parse_mode="HTML"
-    )
+    await cb.message.edit_text(tx(lang,"room_created", gid=gid, stake=stake), parse_mode="HTML")
     await cb.answer()
 
 # ── Xonaga qo'shilish ─────────────────────────────────────
@@ -844,8 +875,7 @@ async def cb_join(cb: types.CallbackQuery):
 
     pr = get_pr(uid)
     if pr < stake:
-        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK),
-                        show_alert=True); return
+        await cb.answer(tx(lang,"not_enough", stake=stake, pr=pr, support=SUPPORT_LINK), show_alert=True); return
 
     p1_pr = get_pr(p1)
     if p1_pr < stake:
@@ -853,7 +883,6 @@ async def cb_join(cb: types.CallbackQuery):
         await cb.answer("❌ Xona yaratuvchida PR yetarli emas, xona bekor qilindi.", show_alert=True)
         return
 
-    # PRni ikkalasidan ayir
     change_pr(uid, -stake)
     change_pr(p1,  -stake)
     start_game(gid, uid)
@@ -861,26 +890,15 @@ async def cb_join(cb: types.CallbackQuery):
     p1_lang = get_lang(p1)
     p2_lang = lang
 
-    # Boshlash xabari
-    started_text_p1 = tx(p1_lang,"game_started", gid=gid, stake=stake,
-                          p1=p1, p2=uid, turn_name=f"#{p1}")
-    started_text_p2 = tx(p2_lang,"game_started", gid=gid, stake=stake,
-                          p1=p1, p2=uid, turn_name=f"#{p1}")
+    started_text_p1 = tx(p1_lang,"game_started", gid=gid, stake=stake, p1=p1, p2=uid, turn_name=f"#{p1}")
+    started_text_p2 = tx(p2_lang,"game_started", gid=gid, stake=stake, p1=p1, p2=uid, turn_name=f"#{p1}")
 
-    # P1 ga throw tugmasi
     try:
-        await bot_obj.send_message(p1, started_text_p1, parse_mode="HTML",
-                                   reply_markup=throw_kb(p1_lang, gid))
-    except Exception:
-        pass
+        await bot_obj.send_message(p1, started_text_p1, parse_mode="HTML", reply_markup=throw_kb(p1_lang, gid))
+    except Exception: pass
 
-    # P2 ga wait xabari
-    await cb.message.answer(
-        started_text_p2 + "\n\n" + tx(p2_lang,"wait_turn"),
-        parse_mode="HTML"
-    )
+    await cb.message.answer(started_text_p2 + "\n\n" + tx(p2_lang,"wait_turn"), parse_mode="HTML")
 
-    # Timeout vazifasini boshlash
     task = asyncio.create_task(timeout_task(gid, stake, p1, uid))
     game_timers[gid] = task
     await cb.answer()
@@ -909,58 +927,35 @@ async def cb_throw(cb: types.CallbackQuery):
     if status not in ('p1_turn', 'p2_turn'):
         await cb.answer("❌ Noto'g'ri holat!", show_alert=True); return
 
-    # Tugmani o'chirib qo'yamiz
     try:
         await cb.message.edit_reply_markup()
-    except Exception:
-        pass
+    except Exception: pass
 
-    # Dice tashlash
     dice_msg = await bot_obj.send_dice(cb.message.chat.id, emoji="🎲")
     val = dice_msg.dice.value
-    await asyncio.sleep(4)  # animatsiya tugashini kutish
+    await asyncio.sleep(4)
 
     if status == 'p1_turn':
         set_p1_dice(gid, val)
         p2_lang = get_lang(p2)
 
-        # P1 ga o'z natijasi
-        await bot_obj.send_message(
-            p1,
-            f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...",
-            parse_mode="HTML"
-        )
-        # P2 ga navbat xabari — P1 ning raqami ko'rinmaydi (adolatli o'yin)
+        await bot_obj.send_message(p1, f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...", parse_mode="HTML")
         try:
-            await bot_obj.send_message(
-                p2,
-                tx(p2_lang, "your_turn_now"),
-                parse_mode="HTML",
-                reply_markup=throw_kb(p2_lang, gid)
-            )
-        except Exception:
-            pass
+            await bot_obj.send_message(p2, tx(p2_lang, "your_turn_now"), parse_mode="HTML", reply_markup=throw_kb(p2_lang, gid))
+        except Exception: pass
 
-        # Eski timeout ni bekor qilib yangi boshlash
         if gid in game_timers:
             game_timers[gid].cancel()
         task = asyncio.create_task(timeout_task(gid, stake, p1, p2))
         game_timers[gid] = task
 
-    else:  # p2_turn
+    else:
         set_p2_dice(gid, val)
 
-        # P2 ga o'z natijasi
-        await bot_obj.send_message(
-            p2,
-            f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...",
-            parse_mode="HTML"
-        )
-        # Timeoutni bekor qil
+        await bot_obj.send_message(p2, f"✅ Siz tosh tashlading: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...", parse_mode="HTML")
         if gid in game_timers:
             game_timers[gid].cancel()
             del game_timers[gid]
-        # Natijani hisobla
         await resolve_game(gid)
 
     await cb.answer()
@@ -992,8 +987,7 @@ async def h_buy(msg: types.Message):
 @dp.message(F.text.in_(["💬 Murojaat","💬 Поддержка"]))
 async def h_support(msg: types.Message):
     lang = get_lang(msg.from_user.id)
-    await msg.answer(tx(lang,"support_msg", link=SUPPORT_LINK),
-                     parse_mode="HTML", reply_markup=support_kb())
+    await msg.answer(tx(lang,"support_msg", link=SUPPORT_LINK), parse_mode="HTML", reply_markup=support_kb())
 
 # ── Til ──────────────────────────────────────────────────
 @dp.message(F.text.in_(["🌐 Til","🌐 Язык"]))
@@ -1030,8 +1024,7 @@ async def h_text(msg: types.Message):
             await msg.answer(tx(lang,"transfer_no_user"), parse_mode="HTML"); return
         user_states[uid] = {'step': 'transfer_amount', 'to_id': to_id}
         name = to_u[2] or to_u[1] or f"#{to_id}"
-        await msg.answer(tx(lang,"transfer_ask_amt", name=name, uid=to_id, pr=get_pr(uid)),
-                         parse_mode="HTML")
+        await msg.answer(tx(lang,"transfer_ask_amt", name=name, uid=to_id, pr=get_pr(uid)), parse_mode="HTML")
 
     elif state['step'] == 'transfer_amount':
         if not text.isdigit():
@@ -1044,9 +1037,7 @@ async def h_text(msg: types.Message):
         if amount > pr:
             await msg.answer(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML"); return
         user_states.pop(uid, None)
-        await msg.answer(tx(lang,"transfer_confirm", to_id=to_id, amount=amount),
-                         parse_mode="HTML",
-                         reply_markup=transfer_confirm_kb(lang, to_id, amount))
+        await msg.answer(tx(lang,"transfer_confirm", to_id=to_id, amount=amount), parse_mode="HTML", reply_markup=transfer_confirm_kb(lang, to_id, amount))
 
 # ════════════════════════════════════════════════════════
 #  👮  ADMIN BUYRUQLARI
@@ -1055,7 +1046,6 @@ def is_admin(uid): return uid in ADMIN_IDS
 
 @dp.message(Command("give"))
 async def cmd_give(msg: types.Message):
-    """  /give <user_id> <amount>  """
     if not is_admin(msg.from_user.id):
         await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     p = msg.text.split()
@@ -1068,7 +1058,6 @@ async def cmd_give(msg: types.Message):
 
 @dp.message(Command("rate"))
 async def cmd_rate(msg: types.Message):
-    """  /rate <uzs>  """
     if not is_admin(msg.from_user.id):
         await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     p = msg.text.split()
@@ -1085,10 +1074,15 @@ async def cmd_stats(msg: types.Message):
     if not is_admin(msg.from_user.id):
         await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     conn  = dbc()
-    users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    games = conn.execute("SELECT COUNT(*) FROM games WHERE status='finished'").fetchone()[0]
-    wait  = conn.execute("SELECT COUNT(*) FROM games WHERE status='waiting'").fetchone()[0]
-    xfers = conn.execute("SELECT COUNT(*),COALESCE(SUM(amount),0) FROM transfers").fetchone()
+    with conn.cursor() as c:
+        c.execute("SELECT COUNT(*) FROM users")
+        users = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM games WHERE status='finished'")
+        games = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM games WHERE status='waiting'")
+        wait  = c.fetchone()[0]
+        c.execute("SELECT COUNT(*), COALESCE(SUM(amount),0) FROM transfers")
+        xfers = c.fetchone()
     conn.close()
     await msg.answer(
         f"📊 <b>Statistika:</b>\n\n"
@@ -1105,7 +1099,7 @@ async def cmd_stats(msg: types.Message):
 async def main():
     init_db()
     print("=" * 50)
-    print("  ✅  PRm4u Bot v2.1 ishga tushdi!")
+    print("  ✅  PRm4u Bot v2.1 (PostgreSQL) ishga tushdi!")
     print(f"  👮  Admin: {ADMIN_IDS}")
     print(f"  💸  Komissiya: {COMMISSION_PCT}%")
     print(f"  ⏱   Tosh tashlash vaqti: {THROW_TIMEOUT}s")
