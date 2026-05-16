@@ -562,11 +562,19 @@ async def resolve_game(gid):
     lang1, lang2 = get_lang(p1), get_lang(p2)
     commission = int(stake * COMMISSION_PCT / 100)
     if p1_val == p2_val:
-        change_pr(p1, stake); change_pr(p2, stake)
-        finish_game_db(gid, 0)
-        for uid, lang in [(p1, lang1), (p2, lang2)]:
-            bal = get_pr(uid)
-            await send_gif_and_text(uid, False, tx(lang,"draw_text", gid=gid, stake=stake, val=p1_val, bal=bal))
+        reset_game_for_rematch(gid)
+        try:
+            await bot_obj.send_message(p1,
+                f"🤝 <b>Durrang! Ikkalangizda: {p1_val}</b>\n\n🎲 Qayta tosh tashlang!",
+                parse_mode="HTML", reply_markup=throw_kb(lang1, gid))
+        except: pass
+        try:
+            await bot_obj.send_message(p2,
+                f"🤝 <b>Durrang! Ikkalangizda: {p1_val}</b>\n\n⏳ Raqib tosh tashlashini kuting...",
+                parse_mode="HTML")
+        except: pass
+        if gid in game_timers: game_timers[gid].cancel()
+        game_timers[gid] = asyncio.create_task(timeout_task(gid, stake, p1, p2))
     else:
         winner_id = p1 if p1_val > p2_val else p2
         loser_id  = p2 if p1_val > p2_val else p1
@@ -1039,6 +1047,9 @@ async def cmd_give_pr(msg: types.Message):
     if len(p) != 3 or not p[1].isdigit() or not p[2].isdigit():
         await msg.answer("❌ Format: /give_pr <miqdor> <user_id>"); return
     uid, amount = int(p[2]), int(p[1])
+    u = get_user(uid)
+    if not u:
+        await msg.answer("❌ Foydalanuvchi topilmadi! Avval /start bosishi kerak."); return
     change_pr(uid, amount)
     lang = get_lang(msg.from_user.id)
     await msg.answer(tx(lang,"admin_ok_pr", uid=uid, amount=amount, bal=get_pr(uid)), parse_mode="HTML")
