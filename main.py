@@ -242,7 +242,10 @@ def cancel_game_db(gid):
     conn = dbc(); c = conn.cursor()
     c.execute("UPDATE games SET status='cancelled' WHERE id=%s", (gid,))
     conn.commit(); conn.close()
-
+def reset_game_for_rematch(gid):
+    conn = dbc(); c = conn.cursor()
+    c.execute("UPDATE games SET p1_dice=0, p2_dice=0, status='p1_turn' WHERE id=%s", (gid,))
+    conn.commit(); conn.close()
 def cancel_waiting(uid):
     conn = dbc(); c = conn.cursor()
     c.execute("DELETE FROM games WHERE creator_id=%s AND status='waiting'", (uid,))
