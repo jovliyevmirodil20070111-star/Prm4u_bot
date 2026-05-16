@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════╗
-║         PRm4u GAME BOT  v2.0  — @mirodil_info        ║
+║         PRm4u GAME BOT  v2.1  — @mirodil_info        ║
 ║  O'rnatish:  pip install aiogram aiohttp psycopg2-binary ║
 ╚══════════════════════════════════════════════════════╝
 """
@@ -41,15 +41,20 @@ def dbc():
 def init_db():
     conn = dbc(); c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS users (
-        user_id   BIGINT PRIMARY KEY,
-        username  TEXT    DEFAULT '',
-        full_name TEXT    DEFAULT '',
-        pr        INTEGER DEFAULT 1000,
-        last_bonus TEXT   DEFAULT '',
-        lang      TEXT    DEFAULT 'uz',
-        wins      INTEGER DEFAULT 0,
-        losses    INTEGER DEFAULT 0
+        user_id     BIGINT PRIMARY KEY,
+        username    TEXT    DEFAULT '',
+        full_name   TEXT    DEFAULT '',
+        pr          INTEGER DEFAULT 1000,
+        last_bonus  TEXT    DEFAULT '',
+        lang        TEXT    DEFAULT 'uz',
+        wins        INTEGER DEFAULT 0,
+        losses      INTEGER DEFAULT 0,
+        usd_balance REAL    DEFAULT 0
     )""")
+    # Eski DB larga usd_balance ustunini qo'shish (migration)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_balance REAL DEFAULT 0")
+    except: pass
     c.execute("""CREATE TABLE IF NOT EXISTS games (
         id         SERIAL PRIMARY KEY,
         creator_id BIGINT,
@@ -87,9 +92,10 @@ def get_user(uid):
     c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
     r = c.fetchone(); conn.close(); return r
 
-def get_pr(uid):   u = get_user(uid); return u[3] if u else 0
-def get_lang(uid): u = get_user(uid); return u[5] if u else 'uz'
-def get_wl(uid):   u = get_user(uid); return (u[6], u[7]) if u else (0, 0)
+def get_pr(uid):        u = get_user(uid); return u[3] if u else 0
+def get_lang(uid):      u = get_user(uid); return u[5] if u else 'uz'
+def get_wl(uid):        u = get_user(uid); return (u[6], u[7]) if u else (0, 0)
+def get_usd_bal(uid):   u = get_user(uid); return round(u[8], 4) if u and u[8] else 0.0
 
 def set_lang(uid, lang):
     conn = dbc(); c = conn.cursor()
@@ -99,6 +105,11 @@ def set_lang(uid, lang):
 def change_pr(uid, delta):
     conn = dbc(); c = conn.cursor()
     c.execute("UPDATE users SET pr=GREATEST(0,pr+%s) WHERE user_id=%s", (delta, uid))
+    conn.commit(); conn.close()
+
+def change_usd(uid, delta):
+    conn = dbc(); c = conn.cursor()
+    c.execute("UPDATE users SET usd_balance=GREATEST(0,usd_balance+%s) WHERE user_id=%s", (delta, uid))
     conn.commit(); conn.close()
 
 def add_win(uid):
@@ -122,6 +133,7 @@ def set_setting(k, v):
     conn.commit(); conn.close()
 
 def do_transfer(from_id, to_id, amount):
+    """Faqat PR transfer — $ transferi yo'q"""
     conn = dbc(); c = conn.cursor()
     c.execute("SELECT pr FROM users WHERE user_id=%s", (from_id,))
     fp = c.fetchone()
@@ -247,8 +259,8 @@ def get_stats():
 T = {
 "uz": {
 "welcome":("🎲 <b>PRm4u O'yin Botiga Xush Kelibsiz!</b>\n\n🎟 Sizga <b>1 000 PR</b> boshlang'ich balans berildi!\n\n👇 Menyudan foydalaning:"),
-"balance":("👇 <b>Sizning balans PR va $</b>\n\n🎟 {pr:,} PR\n💰 {usd:.4f} $\n\nKurs: 1$ = {uzs:,} so'm\n\n💡 PR sotib olish:\n{support}"),
-"profile":("👤 <b>Profil</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Ism: {name}\n🎟 Balans: <b>{pr:,} PR</b>\n🏆 G'alabalar: {wins}\n💀 Mag'lubiyatlar: {losses}"),
+"balance":("👇 <b>Sizning balans</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nKurs: 1$ = {pr_per_usd:,} PR\n\n💡 PR yoki $ sotib olish:\n{support}"),
+"profile":("👤 <b>Profil</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Ism: {name}\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n🏆 G'alabalar: {wins}\n💀 Mag'lubiyatlar: {losses}"),
 "transfer_ask_id":"💸 <b>PR Transfer</b>\n\nPR yubormoqchi bo'lgan foydalanuvchining <b>Telegram ID</b> sini kiriting:\n\n💡 ID ni bilish: @userinfobot",
 "transfer_ask_amt":"👤 Foydalanuvchi: <b>{name}</b>\n🆔 ID: <code>{uid}</code>\n\nQancha PR yubormoqchisiz?\n(Sizda: <b>{pr:,} PR</b>)",
 "transfer_confirm":"✅ Tasdiqlash:\n\n➡️ Kimga: <code>{to_id}</code>\n💸 Miqdor: <b>{amount:,} PR</b>\n💰 Komissiya: 0%\n\nDavom etasizmi?",
@@ -258,6 +270,20 @@ T = {
 "transfer_no_funds":"❌ Yetarli PR yo'q! Sizda: <b>{pr:,} PR</b>",
 "transfer_cancel":"❌ Transfer bekor qilindi.",
 "transfer_self":"❌ O'zingizga transfer qila olmaysiz!",
+# Obmen
+"obmen_choose":"💱 <b>Ayirboshlash</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nKurs: <b>1$ = {pr_per_usd:,} PR</b>\n\nQaysi yo'nalishni tanlaysiz?",
+"obmen_pr_to_usd_ask":"💱 <b>PR → $</b>\n\nQancha PR ayirboshlaysiz?\nSizda: <b>{pr:,} PR</b>\n\nKurs: {pr_per_usd:,} PR = 1$\n\nMiqdor kiriting:",
+"obmen_usd_to_pr_ask":"💱 <b>$ → PR</b>\n\nQancha $ ayirboshlaysiz?\nSizda: <b>{usd:.4f} $</b>\n\nKurs: 1$ = {pr_per_usd:,} PR\n\nMiqdor kiriting (masalan: 0.5):",
+"obmen_pr_to_usd_confirm":"✅ Tasdiqlash:\n\n💸 Berasiz: <b>{pr:,} PR</b>\n💵 Olasiz: <b>{usd:.4f} $</b>\n\nDavom etasizmi?",
+"obmen_usd_to_pr_confirm":"✅ Tasdiqlash:\n\n💵 Berasiz: <b>{usd:.4f} $</b>\n💸 Olasiz: <b>{pr:,} PR</b>\n\nDavom etasizmi?",
+"obmen_ok_pr_to_usd":"✅ <b>Ayirboshlash muvaffaqiyatli!</b>\n\n➖ <b>{pr:,} PR</b> yechildi\n➕ <b>{usd:.4f} $</b> qo'shildi\n\n🎟 PR: <b>{bal_pr:,} PR</b>\n💵 USD: <b>{bal_usd:.4f} $</b>",
+"obmen_ok_usd_to_pr":"✅ <b>Ayirboshlash muvaffaqiyatli!</b>\n\n➖ <b>{usd:.4f} $</b> yechildi\n➕ <b>{pr:,} PR</b> qo'shildi\n\n🎟 PR: <b>{bal_pr:,} PR</b>\n💵 USD: <b>{bal_usd:.4f} $</b>",
+"obmen_no_pr":"❌ Yetarli PR yo'q! Sizda: <b>{pr:,} PR</b>",
+"obmen_no_usd":"❌ Yetarli $ yo'q! Sizda: <b>{usd:.4f} $</b>",
+"obmen_invalid":"❌ Noto'g'ri miqdor! Qaytadan kiriting.",
+"obmen_cancel":"❌ Ayirboshlash bekor qilindi.",
+"obmen_min_pr":"❌ Minimal miqdor: <b>{min_pr:,} PR</b>",
+# Game
 "game_menu":"🎲 <b>O'yin xonasi</b>\n\n💰 Balansingiz: <b>{pr:,} PR</b>",
 "rooms_list":"🎮 <b>Ochiq xonalar ({count} ta):</b>\n\nXona tanlang yoki yangi yarating:",
 "rooms_empty":"😔 Hozir ochiq xona yo'q.\nBirinchi bo'lib xona oching!",
@@ -281,19 +307,21 @@ T = {
 "cancel_ok":"❌ Bekor qilindi.",
 "lang_choose":"🌐 Tilni tanlang:",
 "lang_set":"✅ Til: <b>O'zbekcha</b>",
-"admin_ok":"✅ {uid} ga {amount:,} PR berildi. Balans: {bal:,} PR",
-"admin_rate":"✅ Kurs: 1$ = {uzs:,} so'm",
+"admin_ok_pr":"✅ {uid} ga {amount:,} PR berildi. PR balansi: {bal:,} PR",
+"admin_ok_usd":"✅ {uid} ga {amount:.4f} $ berildi. USD balansi: {bal:.4f} $",
+"admin_rate":"✅ Kurs: 1$ = {uzs:,} so'm | {pr_per_usd:,} PR",
 "admin_only":"❌ Faqat admin!",
 "btn_game":"🎲 O'yin xonasi","btn_balance":"🎟 Balans","btn_bonus":"🎁 Kunlik bonus",
 "btn_support":"💬 Murojaat","btn_buy":"🛍 PR sotib olish","btn_lang":"🌐 Til",
-"btn_transfer":"💸 Transfer","btn_confirm":"✅ Tasdiqlash","btn_cancel":"❌ Bekor",
+"btn_transfer":"💸 PR Transfer","btn_obmen":"💱 Ayirboshlash","btn_confirm":"✅ Tasdiqlash","btn_cancel":"❌ Bekor",
 "btn_throw":"🎲 Tosh tashlash","btn_join":"✅ Qo'shilish","btn_profile":"👤 Profil ko'rish",
 "btn_rooms":"🎮 Xonalar ro'yxati","btn_create":"➕ Yangi xona","btn_back":"🔙 Orqaga",
+"btn_pr_to_usd":"🎟➡️💵 PR → $","btn_usd_to_pr":"💵➡️🎟 $ → PR",
 },
 "ru": {
 "welcome":("🎲 <b>Добро пожаловать в PRm4u!</b>\n\n🎟 Вам начислено <b>1 000 PR</b>!\n\n👇 Используйте меню:"),
-"balance":("👇 <b>Ваш баланс PR и $</b>\n\n🎟 {pr:,} PR\n💰 {usd:.4f} $\n\nКурс: 1$ = {uzs:,} сум\n\n💡 Купить PR:\n{support}"),
-"profile":("👤 <b>Профиль</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Имя: {name}\n🎟 Баланс: <b>{pr:,} PR</b>\n🏆 Победы: {wins}\n💀 Поражения: {losses}"),
+"balance":("👇 <b>Ваш баланс</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nКурс: 1$ = {pr_per_usd:,} PR\n\n💡 Купить PR или $:\n{support}"),
+"profile":("👤 <b>Профиль</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Имя: {name}\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n🏆 Победы: {wins}\n💀 Поражения: {losses}"),
 "transfer_ask_id":"💸 <b>Перевод PR</b>\n\nВведите <b>Telegram ID</b> получателя:\n\n💡 ID узнать: @userinfobot",
 "transfer_ask_amt":"👤 Пользователь: <b>{name}</b>\n🆔 ID: <code>{uid}</code>\n\nСколько PR перевести?\n(У вас: <b>{pr:,} PR</b>)",
 "transfer_confirm":"✅ Подтверждение:\n\n➡️ Кому: <code>{to_id}</code>\n💸 Сумма: <b>{amount:,} PR</b>\n💰 Комиссия: 0%\n\nПодтвердить?",
@@ -303,6 +331,20 @@ T = {
 "transfer_no_funds":"❌ Недостаточно PR! У вас: <b>{pr:,} PR</b>",
 "transfer_cancel":"❌ Перевод отменён.",
 "transfer_self":"❌ Нельзя переводить самому себе!",
+# Обмен
+"obmen_choose":"💱 <b>Обмен</b>\n\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n\nКурс: <b>1$ = {pr_per_usd:,} PR</b>\n\nВыберите направление:",
+"obmen_pr_to_usd_ask":"💱 <b>PR → $</b>\n\nСколько PR обменять?\nУ вас: <b>{pr:,} PR</b>\n\nКурс: {pr_per_usd:,} PR = 1$\n\nВведите сумму:",
+"obmen_usd_to_pr_ask":"💱 <b>$ → PR</b>\n\nСколько $ обменять?\nУ вас: <b>{usd:.4f} $</b>\n\nКурс: 1$ = {pr_per_usd:,} PR\n\nВведите сумму (напр: 0.5):",
+"obmen_pr_to_usd_confirm":"✅ Подтверждение:\n\n💸 Отдаёте: <b>{pr:,} PR</b>\n💵 Получаете: <b>{usd:.4f} $</b>\n\nПодтвердить?",
+"obmen_usd_to_pr_confirm":"✅ Подтверждение:\n\n💵 Отдаёте: <b>{usd:.4f} $</b>\n💸 Получаете: <b>{pr:,} PR</b>\n\nПодтвердить?",
+"obmen_ok_pr_to_usd":"✅ <b>Обмен выполнен!</b>\n\n➖ <b>{pr:,} PR</b> списано\n➕ <b>{usd:.4f} $</b> зачислено\n\n🎟 PR: <b>{bal_pr:,} PR</b>\n💵 USD: <b>{bal_usd:.4f} $</b>",
+"obmen_ok_usd_to_pr":"✅ <b>Обмен выполнен!</b>\n\n➖ <b>{usd:.4f} $</b> списано\n➕ <b>{pr:,} PR</b> зачислено\n\n🎟 PR: <b>{bal_pr:,} PR</b>\n💵 USD: <b>{bal_usd:.4f} $</b>",
+"obmen_no_pr":"❌ Недостаточно PR! У вас: <b>{pr:,} PR</b>",
+"obmen_no_usd":"❌ Недостаточно $! У вас: <b>{usd:.4f} $</b>",
+"obmen_invalid":"❌ Неверная сумма! Попробуйте снова.",
+"obmen_cancel":"❌ Обмен отменён.",
+"obmen_min_pr":"❌ Минимальная сумма: <b>{min_pr:,} PR</b>",
+# Game
 "game_menu":"🎲 <b>Игровой зал</b>\n\n💰 Баланс: <b>{pr:,} PR</b>",
 "rooms_list":"🎮 <b>Открытые комнаты ({count} шт.):</b>\n\nВыберите или создайте новую:",
 "rooms_empty":"😔 Нет открытых комнат.\nСоздайте первую!",
@@ -326,14 +368,16 @@ T = {
 "cancel_ok":"❌ Отменено.",
 "lang_choose":"🌐 Выберите язык:",
 "lang_set":"✅ Язык: <b>Русский</b>",
-"admin_ok":"✅ {uid} получил {amount:,} PR. Баланс: {bal:,} PR",
-"admin_rate":"✅ Курс: 1$ = {uzs:,} сум",
+"admin_ok_pr":"✅ {uid} получил {amount:,} PR. PR баланс: {bal:,} PR",
+"admin_ok_usd":"✅ {uid} получил {amount:.4f} $. USD баланс: {bal:.4f} $",
+"admin_rate":"✅ Курс: 1$ = {uzs:,} сум | {pr_per_usd:,} PR",
 "admin_only":"❌ Только для админов!",
 "btn_game":"🎲 Игровой зал","btn_balance":"🎟 Баланс","btn_bonus":"🎁 Бонус",
 "btn_support":"💬 Поддержка","btn_buy":"🛍 Купить PR","btn_lang":"🌐 Язык",
-"btn_transfer":"💸 Перевод","btn_confirm":"✅ Подтвердить","btn_cancel":"❌ Отмена",
+"btn_transfer":"💸 PR Перевод","btn_obmen":"💱 Обмен","btn_confirm":"✅ Подтвердить","btn_cancel":"❌ Отмена",
 "btn_throw":"🎲 Бросить кость","btn_join":"✅ Войти","btn_profile":"👤 Профиль",
 "btn_rooms":"🎮 Список комнат","btn_create":"➕ Новая комната","btn_back":"🔙 Назад",
+"btn_pr_to_usd":"🎟➡️💵 PR → $","btn_usd_to_pr":"💵➡️🎟 $ → PR",
 }
 }
 
@@ -341,6 +385,9 @@ def tx(lang, key, **kw):
     tmpl = T.get(lang, T["uz"]).get(key, key)
     return tmpl.format(**kw) if kw else tmpl
 
+# ════════════════════════════════════════════════════════
+#  ⌨️  KLAVIATURALAR
+# ════════════════════════════════════════════════════════
 def main_kb(lang):
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text=tx(lang,"btn_game")), KeyboardButton(text=tx(lang,"btn_balance"))],
@@ -349,9 +396,32 @@ def main_kb(lang):
     ], resize_keyboard=True)
 
 def balance_kb(lang):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=tx(lang,"btn_transfer"), callback_data="transfer_start"),
+            InlineKeyboardButton(text=tx(lang,"btn_obmen"), callback_data="obmen_start"),
+        ],
+        [
+            InlineKeyboardButton(text=tx(lang,"btn_buy"), callback_data="buy_pr"),
+        ],
+    ])
+
+def obmen_direction_kb(lang):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=tx(lang,"btn_pr_to_usd"), callback_data="obmen_pr_usd"),
+            InlineKeyboardButton(text=tx(lang,"btn_usd_to_pr"), callback_data="obmen_usd_pr"),
+        ],
+        [InlineKeyboardButton(text=tx(lang,"btn_cancel"), callback_data="obmen_cancel")],
+    ])
+
+def obmen_confirm_kb(lang, direction, amount_pr, amount_usd):
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=tx(lang,"btn_transfer"), callback_data="transfer_start"),
-        InlineKeyboardButton(text=tx(lang,"btn_buy"), callback_data="buy_pr"),
+        InlineKeyboardButton(
+            text=tx(lang,"btn_confirm"),
+            callback_data=f"obmen_confirm_{direction}_{amount_pr}_{amount_usd}"
+        ),
+        InlineKeyboardButton(text=tx(lang,"btn_cancel"), callback_data="obmen_cancel"),
     ]])
 
 def game_main_kb(lang):
@@ -406,6 +476,9 @@ def support_kb():
         InlineKeyboardButton(text="💬 Admin — @mirodil_info", url=SUPPORT_LINK)
     ]])
 
+# ════════════════════════════════════════════════════════
+#  🎮  O'YIN LOGIKASI
+# ════════════════════════════════════════════════════════
 async def send_gif_and_text(chat_id, is_win, text):
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
     sent = False
@@ -464,6 +537,9 @@ async def resolve_game(gid):
             tx(llang,"loss_text", gid=gid, stake=stake,
                winner=winner_id, loser=loser_id, w_dice=w_dice, l_dice=l_dice, bal=loser_bal))
 
+# ════════════════════════════════════════════════════════
+#  📲  HANDLERLAR
+# ════════════════════════════════════════════════════════
 @dp.message(Command("start"))
 async def h_start(msg: types.Message):
     uid = msg.from_user.id
@@ -475,11 +551,15 @@ async def h_start(msg: types.Message):
 async def h_balance(msg: types.Message):
     uid = msg.from_user.id
     register(uid, msg.from_user.username, msg.from_user.full_name)
-    lang = get_lang(uid); pr = get_pr(uid)
-    usd = pr / PR_PER_DOLLAR; uzs = await get_usd_uzs()
-    await msg.answer(tx(lang,"balance", pr=pr, usd=usd, uzs=uzs, support=SUPPORT_LINK),
-                     parse_mode="HTML", reply_markup=balance_kb(lang))
+    lang = get_lang(uid)
+    pr  = get_pr(uid)
+    usd = get_usd_bal(uid)
+    await msg.answer(
+        tx(lang,"balance", pr=pr, usd=usd, pr_per_usd=PR_PER_DOLLAR, support=SUPPORT_LINK),
+        parse_mode="HTML", reply_markup=balance_kb(lang)
+    )
 
+# ─── Transfer ───────────────────────────────────────────
 @dp.callback_query(F.data == "transfer_start")
 async def cb_transfer_start(cb: types.CallbackQuery):
     uid = cb.from_user.id; lang = get_lang(uid)
@@ -509,12 +589,88 @@ async def cb_tr_yes(cb: types.CallbackQuery):
         await cb.message.edit_text(tx(lang,"transfer_no_funds", pr=pr), parse_mode="HTML")
     user_states.pop(uid, None); await cb.answer()
 
+# ─── Obmen (Ayirboshlash) ───────────────────────────────
+@dp.callback_query(F.data == "obmen_start")
+async def cb_obmen_start(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    pr  = get_pr(uid); usd = get_usd_bal(uid)
+    await cb.message.answer(
+        tx(lang,"obmen_choose", pr=pr, usd=usd, pr_per_usd=PR_PER_DOLLAR),
+        parse_mode="HTML", reply_markup=obmen_direction_kb(lang)
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data == "obmen_pr_usd")
+async def cb_obmen_pr_usd(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    pr = get_pr(uid)
+    user_states[uid] = {'step': 'obmen_pr_to_usd'}
+    await cb.message.edit_text(
+        tx(lang,"obmen_pr_to_usd_ask", pr=pr, pr_per_usd=PR_PER_DOLLAR),
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data == "obmen_usd_pr")
+async def cb_obmen_usd_pr(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    usd = get_usd_bal(uid)
+    user_states[uid] = {'step': 'obmen_usd_to_pr'}
+    await cb.message.edit_text(
+        tx(lang,"obmen_usd_to_pr_ask", usd=usd, pr_per_usd=PR_PER_DOLLAR),
+        parse_mode="HTML"
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data == "obmen_cancel")
+async def cb_obmen_cancel(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    user_states.pop(uid, None)
+    await cb.message.edit_text(tx(lang,"obmen_cancel"))
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("obmen_confirm_"))
+async def cb_obmen_confirm(cb: types.CallbackQuery):
+    uid = cb.from_user.id; lang = get_lang(uid)
+    # obmen_confirm_{direction}_{amount_pr}_{amount_usd_x10000}
+    parts = cb.data.split("_")
+    direction = parts[2]
+    amount_pr  = int(parts[3])
+    amount_usd = int(parts[4]) / 10000.0
+
+    if direction == "prtousd":
+        pr = get_pr(uid)
+        if pr < amount_pr:
+            await cb.answer(tx(lang,"obmen_no_pr", pr=pr), show_alert=True); return
+        change_pr(uid, -amount_pr)
+        change_usd(uid, amount_usd)
+        bal_pr  = get_pr(uid); bal_usd = get_usd_bal(uid)
+        await cb.message.edit_text(
+            tx(lang,"obmen_ok_pr_to_usd", pr=amount_pr, usd=amount_usd, bal_pr=bal_pr, bal_usd=bal_usd),
+            parse_mode="HTML"
+        )
+    else:  # usdtopr
+        usd = get_usd_bal(uid)
+        if usd < amount_usd - 0.00001:
+            await cb.answer(tx(lang,"obmen_no_usd", usd=usd), show_alert=True); return
+        change_usd(uid, -amount_usd)
+        change_pr(uid, amount_pr)
+        bal_pr  = get_pr(uid); bal_usd = get_usd_bal(uid)
+        await cb.message.edit_text(
+            tx(lang,"obmen_ok_usd_to_pr", usd=amount_usd, pr=amount_pr, bal_pr=bal_pr, bal_usd=bal_usd),
+            parse_mode="HTML"
+        )
+    user_states.pop(uid, None)
+    await cb.answer()
+
+# ─── Buy PR ─────────────────────────────────────────────
 @dp.callback_query(F.data == "buy_pr")
 async def cb_buy_pr(cb: types.CallbackQuery):
     lang = get_lang(cb.from_user.id)
     await cb.message.answer(tx(lang,"buy_pr"), parse_mode="HTML", reply_markup=support_kb())
     await cb.answer()
 
+# ─── Game ────────────────────────────────────────────────
 @dp.message(F.text.in_(["🎲 O'yin xonasi","🎲 Игровой зал"]))
 async def h_game(msg: types.Message):
     uid = msg.from_user.id
@@ -559,7 +715,11 @@ async def cb_profile(cb: types.CallbackQuery):
     u = get_user(view_id)
     if not u: await cb.answer("❌ Foydalanuvchi topilmadi!", show_alert=True); return
     name = u[2] or u[1] or f"#{view_id}"
-    await cb.answer(tx(lang,"profile", uid=view_id, name=name, pr=u[3], wins=u[6], losses=u[7]), show_alert=True)
+    usd  = get_usd_bal(view_id)
+    await cb.answer(
+        tx(lang,"profile", uid=view_id, name=name, pr=u[3], usd=usd, wins=u[6], losses=u[7]),
+        show_alert=True
+    )
 
 @dp.callback_query(F.data == "create_room")
 async def cb_create_room(cb: types.CallbackQuery):
@@ -634,6 +794,7 @@ async def cb_throw(cb: types.CallbackQuery):
         await resolve_game(gid)
     await cb.answer()
 
+# ─── Bonus ──────────────────────────────────────────────
 @dp.message(F.text.in_(["🎁 Kunlik bonus","🎁 Бонус"]))
 async def h_bonus(msg: types.Message):
     uid = msg.from_user.id
@@ -670,14 +831,16 @@ async def cb_lang(cb: types.CallbackQuery):
     await cb.message.answer(tx(lang,"lang_set"), parse_mode="HTML", reply_markup=main_kb(lang))
     await cb.answer()
 
+# ─── Text input handler (transfer + obmen) ──────────────
 @dp.message(F.text & ~F.text.startswith("/"))
 async def h_text(msg: types.Message):
     uid   = msg.from_user.id
     lang  = get_lang(uid)
-    # Buyruqlarni o'tkazib yuborish
     state = user_states.get(uid)
     if not state: return
-    text = msg.text.strip()
+    text  = msg.text.strip()
+
+    # ── Transfer flow ──
     if state['step'] == 'transfer_id':
         if not text.isdigit(): await msg.answer("❌ Faqat raqam kiriting!"); return
         to_id = int(text)
@@ -687,6 +850,7 @@ async def h_text(msg: types.Message):
         user_states[uid] = {'step': 'transfer_amount', 'to_id': to_id}
         name = to_u[2] or to_u[1] or f"#{to_id}"
         await msg.answer(tx(lang,"transfer_ask_amt", name=name, uid=to_id, pr=get_pr(uid)), parse_mode="HTML")
+
     elif state['step'] == 'transfer_amount':
         if not text.isdigit(): await msg.answer("❌ Faqat raqam kiriting!"); return
         amount = int(text); to_id = state['to_id']; pr = get_pr(uid)
@@ -696,30 +860,103 @@ async def h_text(msg: types.Message):
         await msg.answer(tx(lang,"transfer_confirm", to_id=to_id, amount=amount),
                          parse_mode="HTML", reply_markup=transfer_confirm_kb(lang, to_id, amount))
 
+    # ── Obmen flow: PR → $ ──
+    elif state['step'] == 'obmen_pr_to_usd':
+        if not text.isdigit():
+            await msg.answer(tx(lang,"obmen_invalid")); return
+        amount_pr = int(text)
+        if amount_pr < PR_PER_DOLLAR:
+            await msg.answer(tx(lang,"obmen_min_pr", min_pr=PR_PER_DOLLAR), parse_mode="HTML"); return
+        pr = get_pr(uid)
+        if amount_pr > pr:
+            await msg.answer(tx(lang,"obmen_no_pr", pr=pr), parse_mode="HTML"); return
+        amount_usd = amount_pr / PR_PER_DOLLAR
+        # amount_usd ni int ga o'tkazish uchun * 10000 saqlaymiz
+        usd_key = int(round(amount_usd * 10000))
+        user_states.pop(uid, None)
+        await msg.answer(
+            tx(lang,"obmen_pr_to_usd_confirm", pr=amount_pr, usd=amount_usd),
+            parse_mode="HTML",
+            reply_markup=obmen_confirm_kb(lang, "prtousd", amount_pr, usd_key)
+        )
+
+    # ── Obmen flow: $ → PR ──
+    elif state['step'] == 'obmen_usd_to_pr':
+        try:
+            text_clean = text.replace(",", ".")
+            amount_usd = float(text_clean)
+            if amount_usd <= 0: raise ValueError()
+        except:
+            await msg.answer(tx(lang,"obmen_invalid")); return
+        usd = get_usd_bal(uid)
+        if amount_usd > usd + 0.00001:
+            await msg.answer(tx(lang,"obmen_no_usd", usd=usd), parse_mode="HTML"); return
+        amount_pr = int(amount_usd * PR_PER_DOLLAR)
+        if amount_pr <= 0:
+            await msg.answer(tx(lang,"obmen_min_pr", min_pr=1), parse_mode="HTML"); return
+        usd_key = int(round(amount_usd * 10000))
+        user_states.pop(uid, None)
+        await msg.answer(
+            tx(lang,"obmen_usd_to_pr_confirm", usd=amount_usd, pr=amount_pr),
+            parse_mode="HTML",
+            reply_markup=obmen_confirm_kb(lang, "usdtopr", amount_pr, usd_key)
+        )
+
+# ════════════════════════════════════════════════════════
+#  👑  ADMIN BUYRUQLARI
+# ════════════════════════════════════════════════════════
 def is_admin(uid): return uid in ADMIN_IDS
 
+@dp.message(Command("give_pr"))
 @dp.message(Command("give"))
-async def cmd_give(msg: types.Message):
-    if not is_admin(msg.from_user.id): await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
+async def cmd_give_pr(msg: types.Message):
+    if not is_admin(msg.from_user.id):
+        await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     p = msg.text.split()
     if len(p) != 3 or not p[1].isdigit() or not p[2].isdigit():
-        await msg.answer("❌ Format: /give <user_id> <miqdor>"); return
+        await msg.answer("❌ Format: /give_pr <user_id> <miqdor>"); return
     uid, amount = int(p[1]), int(p[2])
     change_pr(uid, amount)
     lang = get_lang(msg.from_user.id)
-    await msg.answer(tx(lang,"admin_ok", uid=uid, amount=amount, bal=get_pr(uid)), parse_mode="HTML")
+    await msg.answer(tx(lang,"admin_ok_pr", uid=uid, amount=amount, bal=get_pr(uid)), parse_mode="HTML")
+
+@dp.message(Command("give_usd"))
+async def cmd_give_usd(msg: types.Message):
+    if not is_admin(msg.from_user.id):
+        await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
+    p = msg.text.split()
+    if len(p) != 3:
+        await msg.answer("❌ Format: /give_usd <user_id> <miqdor>\nMasalan: /give_usd 123456 1.5"); return
+    try:
+        uid = int(p[1])
+        amount = float(p[2])
+        if amount <= 0: raise ValueError()
+    except:
+        await msg.answer("❌ Noto'g'ri format! Masalan: /give_usd 123456 1.5"); return
+    u = get_user(uid)
+    if not u:
+        await msg.answer("❌ Foydalanuvchi topilmadi!"); return
+    change_usd(uid, amount)
+    lang = get_lang(msg.from_user.id)
+    await msg.answer(tx(lang,"admin_ok_usd", uid=uid, amount=amount, bal=get_usd_bal(uid)), parse_mode="HTML")
 
 @dp.message(Command("rate"))
 async def cmd_rate(msg: types.Message):
-    if not is_admin(msg.from_user.id): await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
+    if not is_admin(msg.from_user.id):
+        await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     p = msg.text.split()
-    if len(p) != 2 or not p[1].isdigit(): await msg.answer("❌ Format: /rate <kurs>"); return
-    uzs = int(p[1]); set_setting("usd_uzs", uzs); set_setting("rate_fetch", datetime.now().isoformat())
-    await msg.answer(tx(get_lang(msg.from_user.id),"admin_rate", uzs=uzs), parse_mode="HTML")
+    if len(p) != 2 or not p[1].isdigit():
+        await msg.answer("❌ Format: /rate <kurs_so'm>\nMasalan: /rate 13000"); return
+    uzs = int(p[1])
+    set_setting("usd_uzs", uzs)
+    set_setting("rate_fetch", datetime.now().isoformat())
+    lang = get_lang(msg.from_user.id)
+    await msg.answer(tx(lang,"admin_rate", uzs=uzs, pr_per_usd=PR_PER_DOLLAR), parse_mode="HTML")
 
 @dp.message(Command("stats"))
 async def cmd_stats(msg: types.Message):
-    if not is_admin(msg.from_user.id): await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
+    if not is_admin(msg.from_user.id):
+        await msg.answer(tx(get_lang(msg.from_user.id),"admin_only")); return
     users, games, wait, xfers = get_stats()
     await msg.answer(
         f"📊 <b>Statistika:</b>\n\n👤 Foydalanuvchilar: <b>{users:,}</b>\n"
@@ -727,9 +964,10 @@ async def cmd_stats(msg: types.Message):
         f"💸 Transferlar: <b>{xfers[0]:,}</b> ta / <b>{xfers[1]:,}</b> PR",
         parse_mode="HTML")
 
+# ════════════════════════════════════════════════════════
 async def main():
     init_db()
-    print("✅ PRm4u Bot v2.0 + PostgreSQL ishga tushdi!")
+    print("✅ PRm4u Bot v2.1 + PostgreSQL ishga tushdi!")
     await dp.start_polling(bot_obj)
 
 if __name__ == "__main__":
