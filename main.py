@@ -528,14 +528,24 @@ def support_kb():
 # ════════════════════════════════════════════════════════
 async def send_gif_and_text(chat_id, is_win, text):
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
+    sent = False
     try:
-        await bot_obj.send_animation(chat_id, animation=gif)
-    except:
+        await bot_obj.send_animation(
+            chat_id, animation=gif,
+            caption=text, parse_mode="HTML"
+        )
+        sent = True
+    except: pass
+    if not sent:
         try:
-            await bot_obj.send_document(chat_id, document=gif)
-        except:
-            pass
-    await bot_obj.send_message(chat_id, text, parse_mode="HTML")
+            await bot_obj.send_document(
+                chat_id, document=gif,
+                caption=text, parse_mode="HTML"
+            )
+            sent = True
+        except: pass
+    if not sent:
+        await bot_obj.send_message(chat_id, text, parse_mode="HTML")
     if not sent:
         try:
             await bot_obj.send_document(chat_id, document=gif)
