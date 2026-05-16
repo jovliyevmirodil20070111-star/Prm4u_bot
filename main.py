@@ -864,7 +864,7 @@ async def cb_throw(cb: types.CallbackQuery):
         # P2 ga navbat
         try:
             await bot_obj.send_message(p2,
-                tx(p2_lang,"p1_threw", p1=p1, val=val, p2=p2) + "\n\n" + tx(p2_lang,"your_turn_now"),
+                tx(p2_lang,"your_turn_now"),
                 parse_mode="HTML", reply_markup=throw_kb(p2_lang, gid))
         except: pass
         # Eski timeout ni bekor qilib yangi boshlash
