@@ -529,13 +529,12 @@ def support_kb():
 async def send_gif_and_text(chat_id, is_win, text):
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
     try:
-        await bot_obj.send_video(
-            chat_id,
-            video=gif,
-            supports_streaming=True
-        )
-    except Exception as e:
-        print(f"Video xato: {e}")
+        await bot_obj.send_animation(chat_id, animation=gif)
+    except:
+        try:
+            await bot_obj.send_document(chat_id, document=gif)
+        except:
+            pass
     await bot_obj.send_message(chat_id, text, parse_mode="HTML")
     if not sent:
         try:
