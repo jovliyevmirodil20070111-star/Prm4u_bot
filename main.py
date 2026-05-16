@@ -276,7 +276,7 @@ T = {
 "profile":("👤 <b>Profil</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Ism: {name}\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n🏆 G'alabalar: {wins}\n💀 Mag'lubiyatlar: {losses}"),
 "transfer_ask_id":"💸 <b>PR Transfer</b>\n\nPR yubormoqchi bo'lgan foydalanuvchining <b>Telegram ID</b> sini kiriting:\n\n💡 ID ni bilish: @userinfobot",
 "transfer_ask_amt":"👤 Foydalanuvchi: <b>{name}</b>\n🆔 ID: <code>{uid}</code>\n\nQancha PR yubormoqchisiz?\n(Sizda: <b>{pr:,} PR</b>)",
-"transfer_confirm":"✅ Tasdiqlash:\n\n➡️ Kimga: <code>{to_id}</code>\n💸 Miqdor: <b>{amount:,} PR</b>\n💰 Komissiya: 0%\n\nDavom etasizmi?",
+"transfer_confirm":"✅ Tasdiqlash:\n\n➡️ Kimga: <a href='tg://user?id={to_id}'>{to_id}</a>\n💸 Miqdor: <b>{amount:,} PR</b>\n💰 Komissiya: 0%\n\nDavom etasizmi?",
 "transfer_ok":("👍 <b>Transfer muvaffaqiyatli!</b>\n\nFoydalanuvchi <code>{to_id}</code> ga <b>{amount:,} PR</b>\n\n➖ Komissiya 0%, balansingizdan {amount:,} PR yechildi"),
 "transfer_recv":"🎁 Sizga <code>{from_id}</code> dan <b>{amount:,} PR</b> transfer qilindi!",
 "transfer_no_user":"❌ Bu ID li foydalanuvchi topilmadi!",
@@ -343,7 +343,7 @@ T = {
 "profile":("👤 <b>Профиль</b>\n\n🆔 ID: <code>{uid}</code>\n📛 Имя: {name}\n🎟 PR: <b>{pr:,} PR</b>\n💵 USD: <b>{usd:.4f} $</b>\n🏆 Победы: {wins}\n💀 Поражения: {losses}"),
 "transfer_ask_id":"💸 <b>Перевод PR</b>\n\nВведите <b>Telegram ID</b> получателя:\n\n💡 ID узнать: @userinfobot",
 "transfer_ask_amt":"👤 Пользователь: <b>{name}</b>\n🆔 ID: <code>{uid}</code>\n\nСколько PR перевести?\n(У вас: <b>{pr:,} PR</b>)",
-"transfer_confirm":"✅ Подтверждение:\n\n➡️ Кому: <code>{to_id}</code>\n💸 Сумма: <b>{amount:,} PR</b>\n💰 Комиссия: 0%\n\nПодтвердить?",
+"transfer_confirm":"✅ Подтверждение:\n\n➡️ Кому: <a href='tg://user?id={to_id}'>{to_id}</a>\n💸 Сумма: <b>{amount:,} PR</b>\n💰 Комиссия: 0%\n\nПодтвердить?",
 "transfer_ok":("👍 <b>Перевод выполнен!</b>\n\nПользователю <code>{to_id}</code> — <b>{amount:,} PR</b>\n\n➖ Комиссия 0%, с баланса списано {amount:,} PR"),
 "transfer_recv":"🎁 Вам переведено <b>{amount:,} PR</b> от <code>{from_id}</code>!",
 "transfer_no_user":"❌ Пользователь не найден!",
@@ -476,7 +476,7 @@ def rooms_kb(lang, rooms):
 def room_detail_kb(lang, gid, creator_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=tx(lang,"btn_join"), callback_data=f"join_{gid}"),
-         InlineKeyboardButton(text=tx(lang,"btn_profile"), callback_data=f"profile_{creator_id}")],
+         InlineKeyboardButton(text=tx(lang,"btn_profile"), url=f"tg://user?id={creator_id}")],
         [InlineKeyboardButton(text=tx(lang,"btn_back"), callback_data="rooms_list")],
     ])
 
@@ -1038,7 +1038,41 @@ async def cmd_stats(msg: types.Message):
         f"🎲 Tugagan o'yinlar: <b>{games:,}</b>\n⏳ Kutayotgan: <b>{wait}</b>\n"
         f"💸 Transferlar: <b>{xfers[0]:,}</b> ta / <b>{xfers[1]:,}</b> PR",
         parse_mode="HTML")
+@dp.message(Command("take_pr"))
+async def cmd_take_pr(msg: types.Message):
+    if not is_admin(msg.from_user.id):
+        await msg.answer("❌ Faqat admin!"); return
+    p = msg.text.split()
+    if len(p) != 3 or not p[1].isdigit() or not p[2].isdigit():
+        await msg.answer("❌ Format: /take_pr <miqdor> <user_id>"); return
+    amount, uid = int(p[1]), int(p[2])
+    u = get_user(uid)
+    if not u:
+        await msg.answer("❌ Foydalanuvchi topilmadi!"); return
+    if u[3] < amount:
+        await msg.answer(f"❌ Foydalanuvchida faqat {u[3]:,} PR bor!"); return
+    change_pr(uid, -amount)
+    await msg.answer(f"✅ {uid} dan {amount:,} PR ayirildi. PR balansi: {get_pr(uid):,} PR")
 
+@dp.message(Command("take_usd"))
+async def cmd_take_usd(msg: types.Message):
+    if not is_admin(msg.from_user.id):
+        await msg.answer("❌ Faqat admin!"); return
+    p = msg.text.split()
+    if len(p) != 3:
+        await msg.answer("❌ Format: /take_usd <miqdor> <user_id>"); return
+    try:
+        amount, uid = float(p[1]), int(p[2])
+        if amount <= 0: raise ValueError()
+    except:
+        await msg.answer("❌ Noto'g'ri format!"); return
+    u = get_user(uid)
+    if not u:
+        await msg.answer("❌ Foydalanuvchi topilmadi!"); return
+    if get_usd_bal(uid) < amount:
+        await msg.answer(f"❌ Foydalanuvchida faqat {get_usd_bal(uid):.4f} $ bor!"); return
+    change_usd(uid, -amount)
+    await msg.answer(f"✅ {uid} dan {amount:.4f} $ ayirildi. USD balansi: {get_usd_bal(uid):.4f} $")
 # ════════════════════════════════════════════════════════
 async def main():
     init_db()
