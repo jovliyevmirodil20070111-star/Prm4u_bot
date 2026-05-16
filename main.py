@@ -528,10 +528,23 @@ def support_kb():
 # ════════════════════════════════════════════════════════
 async def send_gif_and_text(chat_id, is_win, text):
     gif = WIN_GIF_ID if is_win else LOSS_GIF_ID
+    sent = False
+    # 1-urinish: send_animation
     try:
         await bot_obj.send_animation(chat_id, animation=gif)
-    except Exception as e:
-        print(f"GIF xato: {e}")
+        sent = True
+    except: pass
+    # 2-urinish: send_document
+    if not sent:
+        try:
+            await bot_obj.send_document(chat_id, document=gif)
+            sent = True
+        except: pass
+    # 3-urinish: send_video
+    if not sent:
+        try:
+            await bot_obj.send_video(chat_id, video=gif)
+        except: pass
     await bot_obj.send_message(chat_id, text, parse_mode="HTML")
 
 async def timeout_task(gid, stake, p1_id, p2_id):
@@ -858,10 +871,11 @@ async def cb_throw(cb: types.CallbackQuery):
     if status == 'p1_turn':
         set_p1_dice(gid, val)
         p2_lang = get_lang(p2)
-        # P1 ga bildirish
-        await bot_obj.send_message(p1, tx(lang,"p1_threw", p1=p1, val=val, p2=p2),
-                                   parse_mode="HTML")
-        # P2 ga navbat
+        # P1 ga faqat o'ziniki ko'rinadi
+        await bot_obj.send_message(p1,
+            f"✅ Siz tosh taShladingiz: <b>{val}</b>\n\n⏳ Raqib tashlashini kuting...",
+            parse_mode="HTML")
+        # P2 ga faqat navbat xabari — raqam ko'rinmaydi!
         try:
             await bot_obj.send_message(p2,
                 tx(p2_lang,"your_turn_now"),
@@ -875,6 +889,10 @@ async def cb_throw(cb: types.CallbackQuery):
 
     else:  # p2_turn
         set_p2_dice(gid, val)
+        # P2 ga o'ziniki ko'rinadi
+        await bot_obj.send_message(p2,
+            f"✅ Siz tosh taShladingiz: <b>{val}</b>\n\n⏳ Natija hisoblanmoqda...",
+            parse_mode="HTML")
         # Timeoutni bekor qil
         if gid in game_timers:
             game_timers[gid].cancel()
